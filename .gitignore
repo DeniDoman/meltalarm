@@ -1,0 +1,4 @@
+/target
+# Private research material: MSI's binary, raw captures (contain the unit serial), original notes.
+/research/
+*.csv
