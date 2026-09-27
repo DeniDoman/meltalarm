@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use meltalarm_source_api::hidapi::HidDevice;
 
 use crate::lock::PsuLock;
-use crate::protocol::{FRAME, Frame, Reg, Reply, classify, read_request};
+use crate::protocol::{FRAME, Frame, Reply, Request, classify, packet};
 
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 const REPLY_DEADLINE: Duration = Duration::from_millis(500);
@@ -34,7 +34,7 @@ pub(crate) trait Transport {
 impl Transport for HidDevice {
     fn send(&self, packet: &[u8; FRAME]) -> io::Result<()> {
         // THE single device-write call site of this crate (read-only contract,
-        // docs/ARCHITECTURE.md §9). `packet` can only come from `read_request`.
+        // docs/ARCHITECTURE.md §9). `packet` can only come from `protocol::packet`.
         // The windows-native backend may return Ok(0) on success; the reply echo validates.
         #[allow(clippy::disallowed_methods)]
         self.write(packet).map(|_| ()).map_err(io::Error::other)
@@ -46,7 +46,7 @@ impl Transport for HidDevice {
 }
 
 /// lock → drain stale reports → request → read until our echo → unlock.
-pub(crate) fn transact(dev: &impl Transport, lock: &PsuLock, reg: Reg) -> Result<Frame, TxError> {
+pub(crate) fn transact(dev: &impl Transport, lock: &PsuLock, req: Request) -> Result<Frame, TxError> {
     let _guard = lock.acquire(LOCK_TIMEOUT)?;
     let io = |e: io::Error| TxError::Io(e.to_string());
 
@@ -58,7 +58,7 @@ pub(crate) fn transact(dev: &impl Transport, lock: &PsuLock, reg: Reg) -> Result
         }
     }
 
-    dev.send(&read_request(reg)).map_err(io)?;
+    dev.send(&packet(req)).map_err(io)?;
 
     let deadline = Instant::now() + REPLY_DEADLINE;
     loop {
@@ -71,7 +71,7 @@ pub(crate) fn transact(dev: &impl Transport, lock: &PsuLock, reg: Reg) -> Result
         if n == 0 {
             continue;
         }
-        match classify(reg, &buf[..n]) {
+        match classify(req, &buf[..n]) {
             Reply::Ours(frame) => return Ok(frame),
             Reply::Busy => return Err(TxError::Busy),
             Reply::Short => return Err(TxError::Short),
@@ -83,7 +83,10 @@ pub(crate) fn transact(dev: &impl Transport, lock: &PsuLock, reg: Reg) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::Reg;
     use crate::protocol::tests::{C1_NORMAL, E0_IDLE, raw};
+
+    const TELEMETRY: Request = Request::Read(Reg::Telemetry);
     use std::cell::RefCell;
     use std::collections::VecDeque;
 
@@ -126,7 +129,7 @@ mod tests {
         // A stale E0 (another client's, wire 1 = 12 A) must not be taken as our answer.
         let stale_e0 = format!("{}C0E0{}", &E0_IDLE[..16], &E0_IDLE[20..]);
         let dev = Fake::new(&[&stale_e0, C1_NORMAL], &[E0_IDLE]);
-        let f = transact(&dev, &PsuLock::None, Reg::Telemetry).unwrap();
+        let f = transact(&dev, &PsuLock::None, TELEMETRY).unwrap();
         assert_eq!(f.wire_currents()[0], [0.125; 6]);
         assert!(dev.stale.borrow().is_empty());
         assert_eq!(dev.sent.borrow().len(), 1);
@@ -135,21 +138,21 @@ mod tests {
     #[test]
     fn skips_foreign_replies_after_request() {
         let dev = Fake::new(&[], &[C1_NORMAL, C1_NORMAL, E0_IDLE]);
-        assert!(transact(&dev, &PsuLock::None, Reg::Telemetry).is_ok());
+        assert!(transact(&dev, &PsuLock::None, TELEMETRY).is_ok());
     }
 
     #[test]
     fn busy_and_timeout_are_errors_not_zeros() {
         let dev = Fake::new(&[], &["51E0FE"]);
-        assert_eq!(transact(&dev, &PsuLock::None, Reg::Telemetry), Err(TxError::Busy));
+        assert_eq!(transact(&dev, &PsuLock::None, TELEMETRY), Err(TxError::Busy));
         let dev = Fake::new(&[], &[C1_NORMAL]);
-        assert_eq!(transact(&dev, &PsuLock::None, Reg::Telemetry), Err(TxError::Timeout));
+        assert_eq!(transact(&dev, &PsuLock::None, TELEMETRY), Err(TxError::Timeout));
     }
 
     #[test]
     fn sends_only_the_read_request() {
         let dev = Fake::new(&[], &[E0_IDLE]);
-        transact(&dev, &PsuLock::None, Reg::Telemetry).unwrap();
-        assert_eq!(dev.sent.borrow()[0], read_request(Reg::Telemetry));
+        transact(&dev, &PsuLock::None, TELEMETRY).unwrap();
+        assert_eq!(dev.sent.borrow()[0], packet(TELEMETRY));
     }
 }

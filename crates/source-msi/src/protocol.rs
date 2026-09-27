@@ -1,4 +1,5 @@
-//! MSI MPG Ai1x00TS USB HID protocol: the closed set of read requests and reply decoding.
+//! MSI MPG Ai1x00TS USB HID protocol: the closed set of requests (8 reads + the connect
+//! handshake, docs/FUNCTIONAL_SPEC.md §3) and reply decoding.
 //!
 //! Offsets follow MSI's own layout: `[0]` = report id, `[1]` = opcode, `[2]` = register,
 //! `[3..]` = data. Verified on a real Ai1300TS (docs/FUNCTIONAL_SPEC.md §1).
@@ -15,6 +16,7 @@ pub const PID_AI1600TS: u16 = 0x808C;
 pub const HARD_WIRE_LIMIT_A: f32 = 18.0;
 
 const OP_READ: u8 = 0x51;
+const OP_HANDSHAKE: u8 = 0xFA;
 
 /// Every register this program can ever ask for. All are reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,11 +57,36 @@ impl Reg {
     }
 }
 
-/// The only packet builder in this crate: `00 51 <reg> 00…`.
-pub(crate) fn read_request(reg: Reg) -> [u8; FRAME] {
+/// Everything this program can ever send: 9 packets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Request {
+    /// MSI's connect handshake `00 FA 51`, sent once per connection exactly as MSI Center's
+    /// `CONNECT_PSU` does. After a cold boot the PSU answers no reads until a host sent it (F19).
+    Handshake,
+    Read(Reg),
+}
+
+impl Request {
+    /// The two bytes a matching reply starts with (also the request's opcode bytes).
+    fn echo(self) -> [u8; 2] {
+        match self {
+            Request::Handshake => [OP_HANDSHAKE, OP_READ],
+            Request::Read(reg) => [OP_READ, reg as u8],
+        }
+    }
+
+    fn min_reply(self) -> usize {
+        match self {
+            Request::Handshake => 3,
+            Request::Read(reg) => reg.min_reply(),
+        }
+    }
+}
+
+/// The only packet builder in this crate: `00 51 <reg> 00…` or `00 FA 51 00…`.
+pub(crate) fn packet(req: Request) -> [u8; FRAME] {
     let mut p = [0u8; FRAME];
-    p[1] = OP_READ;
-    p[2] = reg as u8;
+    p[1..3].copy_from_slice(&req.echo());
     p
 }
 
@@ -77,22 +104,28 @@ pub(crate) enum Reply {
     Foreign,
 }
 
-/// Classify one input report read from the device for a pending request on `reg`.
-pub(crate) fn classify(reg: Reg, raw: &[u8]) -> Reply {
+/// Classify one input report read from the device for a pending request.
+pub(crate) fn classify(req: Request, raw: &[u8]) -> Reply {
+    let echo = req.echo();
     // hidapi strips the zero report id on Windows; tolerate it being present too.
-    let off = usize::from(raw.len() > 1 && raw[0] == 0 && raw[1] == OP_READ);
+    let off = usize::from(raw.len() > 1 && raw[0] == 0 && raw[1] == echo[0]);
     let data = &raw[off..];
-    if data.len() < 2 || data[0] != OP_READ || data[1] != reg as u8 {
+    if data.len() < 2 || data[..2] != echo {
         return Reply::Foreign;
     }
-    if data.len() < reg.min_reply() {
+    if data.len() < req.min_reply() {
         return Reply::Short;
     }
     let mut f = [0u8; FRAME];
     let n = data.len().min(FRAME - 1);
     f[1..1 + n].copy_from_slice(&data[..n]);
-    // A data word may legitimately start with FE; only FE + all zeros means "busy".
-    if f[3] == 0xFE && f[4..].iter().all(|&b| b == 0) {
+    // Handshake: like MSI, FE in byte 3 means "busy". Reads: a data word may legitimately
+    // start with FE, so only FE followed by all zeros means "busy".
+    let busy = match req {
+        Request::Handshake => f[3] == 0xFE,
+        Request::Read(_) => f[3] == 0xFE && f[4..].iter().all(|&b| b == 0),
+    };
+    if busy {
         return Reply::Busy;
     }
     Reply::Ours(Frame(f))
@@ -225,20 +258,34 @@ pub(crate) mod tests {
     }
 
     fn ours(reg: Reg, hex: &str) -> Frame {
-        match classify(reg, &raw(hex)) {
+        match classify(Request::Read(reg), &raw(hex)) {
             Reply::Ours(f) => f,
             _ => panic!("not accepted"),
         }
     }
 
     #[test]
-    fn only_allowlisted_read_packets_exist() {
-        for reg in Reg::ALL {
-            let p = read_request(reg);
-            assert_eq!(&p[..2], &[0x00, 0x51]);
-            assert!([0x10, 0x11, 0x12, 0x13, 0xC0, 0xC1, 0xE0, 0xE1].contains(&p[2]));
-            assert!(p[3..].iter().all(|&b| b == 0));
-        }
+    fn exactly_the_nine_allowlisted_packets_exist() {
+        // Read-only contract (docs/FUNCTIONAL_SPEC.md §3): 8 reads + MSI's connect handshake.
+        let mut all: Vec<[u8; FRAME]> = Reg::ALL.iter().map(|&r| packet(Request::Read(r))).collect();
+        all.push(packet(Request::Handshake));
+        let heads: Vec<[u8; 3]> = all.iter().map(|p| [p[0], p[1], p[2]]).collect();
+        let expected: Vec<[u8; 3]> = [0x10, 0x11, 0x12, 0x13, 0xC0, 0xC1, 0xE0, 0xE1]
+            .iter()
+            .map(|&r| [0x00, 0x51, r])
+            .chain(std::iter::once([0x00, 0xFA, 0x51]))
+            .collect();
+        assert_eq!(heads, expected);
+        assert!(all.iter().all(|p| p[3..].iter().all(|&b| b == 0)));
+    }
+
+    #[test]
+    fn handshake_needs_its_echo_and_uses_msi_busy_rule() {
+        assert!(matches!(classify(Request::Handshake, &raw("FA51")), Reply::Ours(_)));
+        assert!(matches!(classify(Request::Handshake, &raw("FA51FE")), Reply::Busy));
+        assert!(matches!(classify(Request::Handshake, &raw("FA51FE01")), Reply::Busy));
+        assert!(matches!(classify(Request::Handshake, &raw(E0_IDLE)), Reply::Foreign));
+        assert!(matches!(classify(Request::Read(Reg::Telemetry), &raw("FA51")), Reply::Foreign));
     }
 
     #[test]
@@ -268,15 +315,15 @@ pub(crate) mod tests {
 
     #[test]
     fn classifies_foreign_busy_short_and_report_id() {
-        assert!(matches!(classify(Reg::Telemetry, &raw(C1_NORMAL)), Reply::Foreign));
-        assert!(matches!(classify(Reg::Telemetry, &raw("51E0FE")), Reply::Busy));
+        assert!(matches!(classify(Request::Read(Reg::Telemetry), &raw(C1_NORMAL)), Reply::Foreign));
+        assert!(matches!(classify(Request::Read(Reg::Telemetry), &raw("51E0FE")), Reply::Busy));
         // FE as the low byte of real data is not "busy".
-        assert!(matches!(classify(Reg::Telemetry, &raw("51E0FE01")), Reply::Ours(_)));
-        assert!(matches!(classify(Reg::Telemetry, &[0x51, 0xE0, 0x16]), Reply::Short));
+        assert!(matches!(classify(Request::Read(Reg::Telemetry), &raw("51E0FE01")), Reply::Ours(_)));
+        assert!(matches!(classify(Request::Read(Reg::Telemetry), &[0x51, 0xE0, 0x16]), Reply::Short));
         let mut with_id = vec![0u8];
         with_id.extend(raw(E0_IDLE));
         with_id.truncate(FRAME);
-        assert!(matches!(classify(Reg::Telemetry, &with_id), Reply::Ours(_)));
+        assert!(matches!(classify(Request::Read(Reg::Telemetry), &with_id), Reply::Ours(_)));
     }
 
     #[test]

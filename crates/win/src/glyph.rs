@@ -1,7 +1,7 @@
 //! The tray glyph (docs/DESIGN.md "Tray icon"): 6 squares, 2 rows of 3, drawn on the CPU
 //! into an ARGB buffer at the exact tray icon size.
 
-use meltalarm_core::{ConnectorView, Glyph, Level};
+use meltalarm_core::{ConnectorView, Glyph, Level, WireView};
 use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, HICON, ICONINFO};
 
@@ -85,6 +85,15 @@ impl Canvas {
 
 /// Render the glyph for one connector. `blink_on` selects frame A (red tile) of the alarm blink.
 pub fn render(view: &ConnectorView, size: i32, light: bool, blink_on: bool) -> Vec<u32> {
+    draw(view.glyph, &view.wires, view.attention, size, light, blink_on)
+}
+
+/// The hollow placeholder shown while MeltAlarm is still connecting to the PSU (Spec §5.1).
+pub fn render_placeholder(size: i32, light: bool) -> Vec<u32> {
+    draw(Glyph::NoData, &[WireView::default(); 6], false, size, light, false)
+}
+
+fn draw(glyph: Glyph, wires: &[WireView; 6], attention: bool, size: i32, light: bool, blink_on: bool) -> Vec<u32> {
     let p = palette(light);
     let s = size as f32;
     let cell = (size * 4 / 16) as f32;
@@ -93,7 +102,7 @@ pub fn render(view: &ConnectorView, size: i32, light: bool, blink_on: bool) -> V
     let glyph_h = 2.0 * cell + gap;
     let marker_h = (size / 8).max(2) as f32;
     let ox = ((s - glyph_w) / 2.0).floor();
-    let tile = view.glyph == Glyph::Alarm && blink_on;
+    let tile = glyph == Glyph::Alarm && blink_on;
     let oy = if tile { ((s - glyph_h) / 2.0).floor() } else { ((s - glyph_h - marker_h - 1.0) / 2.0).floor() };
     let radius = (size as f32 / 16.0) * 0.75;
 
@@ -101,7 +110,7 @@ pub fn render(view: &ConnectorView, size: i32, light: bool, blink_on: bool) -> V
     if tile {
         cv.rrect(0.0, 0.0, s, s, s / 5.0, RED_TILE, 1.0, None);
     }
-    for (i, w) in view.wires.iter().enumerate() {
+    for (i, w) in wires.iter().enumerate() {
         let x = ox + (i % 3) as f32 * (cell + gap);
         let y = oy + (i / 3) as f32 * (cell + gap);
         let level_color = match w.level {
@@ -109,14 +118,14 @@ pub fn render(view: &ConnectorView, size: i32, light: bool, blink_on: bool) -> V
             Level::Caution => p.caution,
             Level::Warning => p.warning,
         };
-        match view.glyph {
+        match glyph {
             _ if tile => cv.rrect(x, y, cell, cell, radius, if w.flagged { KNOCKOUT } else { 0xFFFFFF }, 1.0, None),
             Glyph::NoData => cv.rrect(x, y, cell, cell, radius, p.neutral, 0.7, Some((s / 16.0).max(1.0))),
             Glyph::NotConnected => cv.rrect(x, y, cell, cell, radius, p.neutral, 0.28, None),
             _ => cv.rrect(x, y, cell, cell, radius, level_color, 1.0, None),
         }
     }
-    if view.attention && !tile {
+    if attention && !tile {
         let mw = 2.0 * cell;
         cv.rrect(((s - mw) / 2.0).floor(), oy + glyph_h + gap + 1.0, mw, marker_h, marker_h / 2.0, p.caution, 1.0, None);
     }

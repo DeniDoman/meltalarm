@@ -16,6 +16,8 @@ pub enum LogEvent {
     Config { text: String },
     ConfigWarning { text: String },
     MonitoringStopped { reason: String },
+    NotConnected { reason: String },
+    Connected { model: String, after: Duration },
 }
 
 pub fn secs(d: Duration) -> String {
@@ -40,6 +42,8 @@ impl LogEvent {
             LogEvent::Config { text } => ("CONFIG", text.clone()),
             LogEvent::ConfigWarning { text } => ("CONFIG", format!("WARNING: {text}")),
             LogEvent::MonitoringStopped { reason } => ("STOPPED", format!("Monitoring stopped: {reason}")),
+            LogEvent::NotConnected { reason } => ("NOT CONNECTED", format!("{reason} — still trying")),
+            LogEvent::Connected { model, after } => ("CONNECTED", format!("{model} after {}", secs(*after))),
         };
         format!("{wall} | {tag:<13} | {body}")
     }

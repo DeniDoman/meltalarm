@@ -30,6 +30,8 @@ const RAW_EVERY: Duration = Duration::from_secs(10);
 pub const SNOOZE: Duration = Duration::from_secs(30);
 pub(crate) const CLEARED_SHOW: Duration = Duration::from_secs(5);
 const TEST_LENGTH: Duration = Duration::from_secs(30);
+/// A present-but-silent PSU is reported (log + notice) after this long (Spec §5.1).
+pub const NOT_CONNECTED_AFTER: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum UserAction {
@@ -43,6 +45,8 @@ pub enum UserAction {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     SourceConnected(SourceInfo),
+    /// Before the first connection: a supported device is present but not answering (reason).
+    SourcePending(String),
     SourceLost,
     Report(Report),
     User(UserAction),
@@ -102,6 +106,11 @@ pub struct Core {
     /// Cause and connector of the latest alarm, for the green "cleared" notch.
     last_alarm: Option<(DeviceStatus, String)>,
     tracking_pending: bool,
+    /// Before the first connection: since when a device has been present but silent, and why.
+    pub(crate) pending: Option<(Instant, String)>,
+    not_connected_logged: bool,
+    pub(crate) notice: Option<Notice>,
+    notice_seq: u32,
 }
 
 impl Core {
@@ -120,6 +129,10 @@ impl Core {
             episode_start: None,
             last_alarm: None,
             tracking_pending: false,
+            pending: None,
+            not_connected_logged: false,
+            notice: None,
+            notice_seq: 0,
         }
     }
 
@@ -130,7 +143,15 @@ impl Core {
     pub fn handle(&mut self, ev: Event, now: Instant) -> Output {
         let mut out = Output::default();
         match ev {
-            Event::SourceConnected(info) => self.on_connected(info),
+            Event::SourceConnected(info) => self.on_connected(info, now, &mut out),
+            Event::SourcePending(reason) => {
+                if self.source.is_none() {
+                    match &mut self.pending {
+                        Some((_, r)) => *r = reason,
+                        None => self.pending = Some((now, reason)),
+                    }
+                }
+            }
             Event::SourceLost => self.mark_no_data(now, &mut out),
             Event::Report(r) => self.on_report(r, now, &mut out),
             Event::User(a) => self.on_user(a, now, &mut out),
@@ -148,7 +169,14 @@ impl Core {
         out
     }
 
-    fn on_connected(&mut self, info: SourceInfo) {
+    fn on_connected(&mut self, info: SourceInfo, now: Instant, out: &mut Output) {
+        if let Some((since, _)) = self.pending.take()
+            && self.not_connected_logged
+        {
+            out.log.push(LogEvent::Connected { model: format!("{} {}", info.vendor, info.model), after: now.duration_since(since) });
+        }
+        self.not_connected_logged = false;
+        self.notice = None;
         let same = self.source.as_ref().is_some_and(|s| s.id == info.id);
         if !same {
             self.conns = info
@@ -309,6 +337,19 @@ impl Core {
     }
 
     fn on_time(&mut self, now: Instant, out: &mut Output) {
+        if let Some((since, reason)) = &self.pending
+            && !self.not_connected_logged
+            && now.duration_since(*since) >= NOT_CONNECTED_AFTER
+        {
+            out.log.push(LogEvent::NotConnected { reason: reason.clone() });
+            self.notice_seq += 1;
+            self.notice = Some(Notice {
+                id: self.notice_seq,
+                title: "MeltAlarm can't reach the PSU".into(),
+                text: format!("{reason}. MeltAlarm keeps trying and connects as soon as the PSU answers."),
+            });
+            self.not_connected_logged = true;
+        }
         if !self.suspended && self.no_data_since.is_none()
             && let Some(t) = self.last_healthy
                 && now.duration_since(t) >= WATCHDOG {
@@ -403,6 +444,11 @@ impl Core {
             if let Some(r) = &c.red {
                 t.push(r.last_red + RED_MERGE);
             }
+        }
+        if let Some((since, _)) = &self.pending
+            && !self.not_connected_logged
+        {
+            t.push(*since + NOT_CONNECTED_AFTER);
         }
         t.into_iter().filter(|&x| x > now).min()
     }

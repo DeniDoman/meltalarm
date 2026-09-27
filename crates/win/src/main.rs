@@ -85,6 +85,7 @@ struct App {
     autostart_applied: Option<bool>,
     taskbar_created: u32,
     popup_on_start: bool,
+    notice_shown: Option<u32>,
 }
 
 fn with_app<R>(f: impl FnOnce(&mut App) -> R) -> Option<R> {
@@ -123,6 +124,12 @@ impl App {
             self.blinking = alarm_glyph;
         }
         self.tray.sync(&view, self.light, self.blink_on);
+        if let Some(n) = &view.notice
+            && self.notice_shown != Some(n.id)
+        {
+            self.tray.notify(&n.title, &n.text);
+            self.notice_shown = Some(n.id);
+        }
         if self.popup_on_start && !view.connectors.is_empty() {
             self.popup_on_start = false;
             self.popup.toggle(0, None, &self.gfx, &view, self.light);
@@ -502,6 +509,7 @@ fn main() {
             autostart_applied: None,
             taskbar_created,
             popup_on_start,
+            notice_shown: None,
         })
     });
     if cfg!(feature = "simulate") && std::env::args().any(|a| a == "--test-alarm") {

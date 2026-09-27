@@ -6,7 +6,7 @@ use meltalarm_core::ViewModel;
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NOTIFYICON_VERSION_4,
+    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_WARNING, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NOTIFYICON_VERSION_4,
     NOTIFYICONDATAW, NOTIFYICONIDENTIFIER, Shell_NotifyIconGetRect, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, HICON, SM_CXSMICON};
@@ -32,6 +32,11 @@ pub fn uid(index: usize) -> u32 {
     index as u32 + 1
 }
 
+/// The single "connecting…" icon shown before any source has connected. It reuses the first
+/// connector's id: Windows remembers "show on taskbar" per id, so a user who pinned MeltAlarm
+/// also sees the placeholder.
+pub const PLACEHOLDER: u32 = 1;
+
 impl Tray {
     pub fn new(hwnd: HWND) -> Self {
         Tray { hwnd, shown: HashMap::new() }
@@ -53,12 +58,18 @@ impl Tray {
 
     pub fn sync(&mut self, view: &ViewModel, light: bool, blink_on: bool) {
         let size = self.icon_size();
-        let mut wanted = Vec::new();
-        for (i, c) in view.connectors.iter().enumerate().filter(|(_, c)| c.tracked) {
-            let id = uid(i);
-            wanted.push(id);
-            let pixels = glyph::render(c, size, light, blink_on);
-            let tip = c.tooltip.clone();
+        let mut desired: Vec<(u32, Vec<u32>, String)> = view
+            .connectors
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.tracked)
+            .map(|(i, c)| (uid(i), glyph::render(c, size, light, blink_on), c.tooltip.clone()))
+            .collect();
+        if let (true, Some(tip)) = (view.connectors.is_empty(), &view.connecting) {
+            desired.push((PLACEHOLDER, glyph::render_placeholder(size, light), tip.clone()));
+        }
+        let wanted: Vec<u32> = desired.iter().map(|d| d.0).collect();
+        for (id, pixels, tip) in desired {
             let existing = self.shown.get(&id);
             if existing.is_some_and(|s| s.pixels == pixels && s.tip == tip && s.size == size) {
                 continue;
@@ -115,6 +126,22 @@ impl Tray {
         for id in ids {
             self.remove(id);
         }
+    }
+
+    /// A Windows notification balloon from one of our icons (the first shown one).
+    pub fn notify(&self, title: &str, text: &str) {
+        let Some(&id) = self.shown.keys().min() else { return };
+        let mut nid = self.base(id);
+        nid.uFlags = NIF_INFO;
+        nid.dwInfoFlags = NIIF_WARNING;
+        for (d, s) in nid.szInfoTitle.iter_mut().zip(title.encode_utf16().take(63)) {
+            *d = s;
+        }
+        for (d, s) in nid.szInfo.iter_mut().zip(text.encode_utf16().take(255)) {
+            *d = s;
+        }
+        // SAFETY: modifying our own icon with a fully initialized struct.
+        unsafe { let _ = Shell_NotifyIconW(NIM_MODIFY, &nid); }
     }
 
     pub fn icon_rect(&self, id: u32) -> Option<RECT> {

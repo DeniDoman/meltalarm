@@ -1,4 +1,8 @@
-//! The acquisition thread: discovery (≤ 15 s at startup), 1 Hz polling, generic reconnect.
+//! The acquisition thread: discovery, 1 Hz polling, generic reconnect (docs/ARCHITECTURE.md §6).
+//!
+//! Startup (Spec §5.1): retry every 2 s. A present-but-silent device is retried forever
+//! (`SourcePending`); the app gives up only if no supported device was seen for 2 min, or a
+//! device is unusable (e.g. not elevated).
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
@@ -10,7 +14,8 @@ use meltalarm_source_api::{Discovery, Driver, HidContext, Source};
 
 use crate::{Command, SourceEvent};
 
-const STARTUP_DISCOVERY: Duration = Duration::from_secs(15);
+// Time allowed at logon for USB enumeration before "no supported PSU" ends startup.
+const ABSENT_GIVE_UP: Duration = Duration::from_secs(120);
 const TICK: Duration = Duration::from_secs(1);
 const REDISCOVER_EVERY: Duration = Duration::from_secs(2);
 const DROP_AFTER_UNHEALTHY: u32 = 3;
@@ -22,6 +27,14 @@ struct Ctx {
     waker: Box<dyn Fn() + Send>,
     hid: HidContext,
     paused: bool,
+}
+
+enum Outcome {
+    Found(Box<dyn Source>),
+    /// A supported device is present but not answering (reason).
+    Pending(String),
+    Unusable(String),
+    Absent,
 }
 
 /// Why a wait ended early.
@@ -52,16 +65,21 @@ impl Ctx {
         }
     }
 
-    fn discover(&mut self) -> Result<Box<dyn Source>, Option<String>> {
-        let mut unusable = None;
+    fn discover(&mut self) -> Outcome {
+        let (mut pending, mut unusable) = (None, None);
         for d in &self.drivers {
             match d.discover(&mut self.hid) {
-                Discovery::Found(s) => return Ok(s),
+                Discovery::Found(s) => return Outcome::Found(s),
                 Discovery::Unusable(msg) => unusable = Some(msg),
+                Discovery::NotReady(why) => pending = Some(why),
                 Discovery::NotPresent => {}
             }
         }
-        Err(unusable)
+        match (unusable, pending) {
+            (Some(msg), _) => Outcome::Unusable(msg),
+            (None, Some(why)) => Outcome::Pending(why),
+            (None, None) => Outcome::Absent,
+        }
     }
 
     fn not_found_message(&self) -> String {
@@ -73,22 +91,31 @@ impl Ctx {
     }
 
     fn run(&mut self) -> Result<(), Stop> {
-        // Startup discovery: give USB enumeration time after logon.
-        let give_up = Instant::now() + STARTUP_DISCOVERY;
+        let started = Instant::now();
+        let mut seen_device = false;
+        let mut reported: Option<String> = None;
         let mut source = loop {
             match self.discover() {
-                Ok(s) => break s,
-                Err(Some(msg)) => {
+                Outcome::Found(s) => break s,
+                Outcome::Unusable(msg) => {
                     self.send(SourceEvent::DiscoveryFailed(msg));
                     return Ok(());
                 }
-                Err(None) if Instant::now() >= give_up => {
+                Outcome::Pending(why) => {
+                    seen_device = true;
+                    if reported.as_ref() != Some(&why) {
+                        self.send(SourceEvent::Core(Event::SourcePending(why.clone())));
+                        reported = Some(why);
+                    }
+                }
+                Outcome::Absent if !seen_device && started.elapsed() >= ABSENT_GIVE_UP => {
                     let msg = self.not_found_message();
                     self.send(SourceEvent::DiscoveryFailed(msg));
                     return Ok(());
                 }
-                Err(None) => self.wait_until(Instant::now() + TICK)?,
+                Outcome::Absent => {}
             }
+            self.wait_until(Instant::now() + REDISCOVER_EVERY)?;
         };
         self.send(SourceEvent::Core(Event::SourceConnected(source.info().clone())));
 
@@ -109,7 +136,7 @@ impl Ctx {
                 self.send(SourceEvent::Core(Event::SourceLost));
                 source = loop {
                     self.wait_until(Instant::now() + REDISCOVER_EVERY)?;
-                    if let Ok(s) = self.discover() {
+                    if let Outcome::Found(s) = self.discover() {
                         break s;
                     }
                 };

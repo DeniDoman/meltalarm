@@ -1,5 +1,6 @@
 //! Dev-only simulated source (cargo feature `simulate`): scripted readings, no USB at all.
-//! Pick a scenario with `MELTALARM_SIM` = cycle (default) | normal | idle | red | alarm | critical | nodata.
+//! Pick a scenario with `MELTALARM_SIM` = cycle (default) | normal | idle | red | alarm | critical | nodata
+//! | silent (present, never answers: T13) | slow (answers after 10 s).
 
 use std::time::{Duration, Instant};
 
@@ -24,6 +25,12 @@ impl Driver for SimDriver {
         "Simulated PSU"
     }
     fn discover(&self, _: &mut HidContext) -> Discovery {
+        static FIRST: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        let first = *FIRST.get_or_init(Instant::now);
+        let scenario = std::env::var("MELTALARM_SIM").unwrap_or_default();
+        if scenario == "silent" || (scenario == "slow" && first.elapsed() < Duration::from_secs(10)) {
+            return Discovery::NotReady("PSU found but not answering (Timeout)".into());
+        }
         Discovery::Found(Box::new(SimSource {
             info: SourceInfo {
                 id: SourceId("sim:psu".into()),

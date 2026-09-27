@@ -88,7 +88,10 @@ impl Runtime {
         while let Ok(ev) = self.rx.try_recv() {
             match ev {
                 SourceEvent::Core(e) => merge(&mut out, self.core.handle(e, now)),
-                SourceEvent::DiscoveryFailed(msg) => update.lifecycle = Some(Lifecycle::DiscoveryFailed(msg)),
+                SourceEvent::DiscoveryFailed(msg) => {
+                    out.log.push(LogEvent::MonitoringStopped { reason: format!("not started: {}", msg.replace('\n', " ")) });
+                    update.lifecycle = Some(Lifecycle::DiscoveryFailed(msg));
+                }
                 SourceEvent::Fatal(msg) => {
                     out.log.push(LogEvent::MonitoringStopped { reason: msg.clone() });
                     update.lifecycle = Some(Lifecycle::Fatal(msg));

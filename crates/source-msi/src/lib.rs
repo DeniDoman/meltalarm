@@ -1,8 +1,8 @@
 //! MeltAlarm source for MSI MPG Ai1300TS / Ai1600TS power supplies (GPU Safeguard+).
 //!
-//! Read-only by construction: the only request bytes this crate can build come from
-//! `protocol::read_request` over the closed `Reg` enum, and they reach the device through
-//! a single call site in `transport` (docs/ARCHITECTURE.md §9).
+//! Read-only by construction: the only bytes this crate can send come from `protocol::packet`
+//! over the closed `Request` enum (8 reads + MSI's connect handshake), and they reach the
+//! device through a single call site in `transport` (docs/ARCHITECTURE.md §9).
 
 pub mod protocol;
 mod lock;
@@ -15,7 +15,7 @@ use meltalarm_source_api::hidapi::HidDevice;
 use meltalarm_source_api::{Discovery, Driver, HidContext, Source};
 
 use lock::PsuLock;
-use protocol::{PID_AI1300TS, PID_AI1600TS, Reg, VID, device_status};
+use protocol::{PID_AI1300TS, PID_AI1600TS, Reg, Request, VID, device_status};
 pub use transport::TxError;
 
 const CONFIG_REFRESH: Duration = Duration::from_secs(60);
@@ -30,30 +30,27 @@ impl Driver for MsiDriver {
     fn discover(&self, hid: &mut HidContext) -> Discovery {
         let api = match hid.refreshed() {
             Ok(api) => api,
-            Err(_) => return Discovery::NotPresent,
+            Err(e) => return Discovery::NotReady(format!("USB HID is not available ({e})")),
         };
+        // The product id identifies a Safeguard+ (TS) model: MSI Center and the Afterburner
+        // plugin select the TS protocol by these PIDs alone.
         let Some(dev_info) =
             api.device_list().find(|d| d.vendor_id() == VID && [PID_AI1300TS, PID_AI1600TS].contains(&d.product_id()))
         else {
             return Discovery::NotPresent;
         };
+        let pid = dev_info.product_id();
         let device = match dev_info.open_device(api) {
             Ok(d) => d,
-            Err(_) => return Discovery::NotPresent,
+            Err(e) => return Discovery::NotReady(format!("PSU found but could not be opened ({e})")),
         };
         let lock = match PsuLock::platform() {
             Ok(l) => l,
             Err(msg) => return Discovery::Unusable(msg),
         };
-        match MsiSource::identify(device, lock) {
-            Ok(Some(src)) => Discovery::Found(Box::new(src)),
-            Ok(None) => Discovery::Unusable(
-                "The connected MSI power supply is not an MPG Ai1300TS / Ai1600TS. \
-                 MeltAlarm needs a PSU with GPU Safeguard+."
-                    .into(),
-            ),
-            // Present but not answering yet (e.g. still starting): try again later.
-            Err(_) => Discovery::NotPresent,
+        match MsiSource::identify(device, lock, pid) {
+            Ok(src) => Discovery::Found(Box::new(src)),
+            Err(e) => Discovery::NotReady(format!("PSU found but not answering ({e:?})")),
         }
     }
 }
@@ -66,17 +63,15 @@ pub struct MsiSource {
 }
 
 impl MsiSource {
-    /// Reads identity; `Ok(None)` if the model string is not a supported TS model.
-    fn identify(device: HidDevice, lock: PsuLock) -> Result<Option<Self>, TxError> {
-        let text = |reg| transport::transact(&device, &lock, reg).map(|f| f.text());
-        let model = text(Reg::MfrModel)?;
-        let id = if model.starts_with("MPG Ai1300TS") {
-            "msi:ai1300ts"
-        } else if model.starts_with("MPG Ai1600TS") {
-            "msi:ai1600ts"
-        } else {
-            return Ok(None);
-        };
+    /// MSI's connect sequence (`CONNECT_PSU`): handshake, then identity. The PSU must answer to
+    /// count as found (source rule 8). Its model string is only for display.
+    fn identify(device: HidDevice, lock: PsuLock, pid: u16) -> Result<Self, TxError> {
+        transport::transact(&device, &lock, Request::Handshake)?;
+        let text = |reg| transport::transact(&device, &lock, Request::Read(reg)).map(|f| f.text());
+        let (id, default_model) =
+            if pid == PID_AI1600TS { ("msi:ai1600ts", "MPG Ai1600TS") } else { ("msi:ai1300ts", "MPG Ai1300TS") };
+        let reported = text(Reg::MfrModel)?;
+        let model = if reported.starts_with("MPG") { reported } else { default_model.to_owned() };
         let info = SourceInfo {
             id: SourceId(id.into()),
             vendor: text(Reg::MfrId).unwrap_or_else(|_| "MSI".into()),
@@ -86,11 +81,11 @@ impl MsiSource {
             connectors: (0..2).map(|i| ConnectorInfo { index: i, label: format!("12V-2x6 #{}", i + 1) }).collect(),
             caps: Capabilities { device_verdict: true, device_limits: true, cutoff_timer: true, wire_flags: true },
         };
-        Ok(Some(MsiSource { device, lock, info, last_config: None }))
+        Ok(MsiSource { device, lock, info, last_config: None })
     }
 
     fn read(&self, reg: Reg) -> Result<protocol::Frame, TxError> {
-        transport::transact(&self.device, &self.lock, reg)
+        transport::transact(&self.device, &self.lock, Request::Read(reg))
     }
 
     fn read_protection(&mut self, now: Instant) -> Option<Protection> {

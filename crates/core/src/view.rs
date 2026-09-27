@@ -18,6 +18,17 @@ pub struct ViewModel {
     /// `Some` ⇔ the alarm should be sounding right now.
     pub audio: Option<AudioScript>,
     pub settings: Settings,
+    /// While no source has connected yet: tooltip for a single placeholder tray icon.
+    pub connecting: Option<String>,
+    /// One-shot user notification; frontends show each `id` once.
+    pub notice: Option<Notice>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Notice {
+    pub id: u32,
+    pub title: String,
+    pub text: String,
 }
 
 impl ViewModel {
@@ -29,6 +40,8 @@ impl ViewModel {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Health {
     Starting,
+    /// A supported device is present but not answering yet (before the first connection).
+    Connecting { since: Instant },
     Live,
     Stale { age: Duration },
     NoData { since: Instant },
@@ -174,7 +187,7 @@ fn conn_number(label: &str) -> String {
 impl Core {
     fn conn_view(&self, c: &Conn, now: Instant) -> ConnectorView {
         let health = self.health(now);
-        let no_data = matches!(health, Health::NoData { .. } | Health::Starting);
+        let no_data = matches!(health, Health::NoData { .. } | Health::Starting | Health::Connecting { .. });
         let stale = matches!(health, Health::Stale { .. }) || no_data;
         let present = c.last_nonzero.is_some_and(|t| now.duration_since(t) <= crate::PRESENCE_WINDOW);
         let flagged = c.verdict.as_ref().map(|v| v.flagged).unwrap_or_default();
@@ -213,7 +226,7 @@ impl Core {
                     crate::log::secs(self.last_healthy.map_or(now.duration_since(since), |t| now.duration_since(t)))
                 ),
             });
-        } else if health == Health::Starting {
+        } else if matches!(health, Health::Starting | Health::Connecting { .. }) {
             notes.push(Note { kind: NoteKind::Info, text: "Reading the PSU…".into() });
         }
         if self.protection.as_ref().is_some_and(|p| !p.enabled) {
@@ -479,6 +492,11 @@ impl Core {
     }
 
     pub(crate) fn health(&self, now: Instant) -> Health {
+        if self.source.is_none()
+            && let Some((since, _)) = &self.pending
+        {
+            return Health::Connecting { since: *since };
+        }
         if let Some(since) = self.no_data_since {
             return Health::NoData { since };
         }
@@ -503,6 +521,10 @@ impl Core {
             alarm: self.alarm_view(now),
             audio: self.audio(),
             settings: self.settings.clone(),
+            connecting: self.source.is_none().then(|| {
+                if self.pending.is_some() { "MeltAlarm · connecting to the PSU…".into() } else { "MeltAlarm · looking for the PSU…".into() }
+            }),
+            notice: self.notice.clone(),
         }
     }
 }

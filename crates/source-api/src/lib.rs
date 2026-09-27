@@ -37,6 +37,9 @@ impl HidContext {
 pub enum Discovery {
     Found(Box<dyn Source>),
     NotPresent,
+    /// A device of this family is present but not answering yet; the reason is kept for the
+    /// "not found" message if it never becomes ready.
+    NotReady(String),
     /// A device of this family is present but cannot be used: unsupported model,
     /// missing privileges, … The message is shown to the user.
     Unusable(String),

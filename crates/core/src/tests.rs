@@ -316,3 +316,44 @@ fn next_wake_is_always_scheduled_while_live() {
     assert!(wake > h.now && wake <= h.now + Duration::from_secs(5));
     let _ = h.t0;
 }
+
+#[test]
+fn silent_psu_is_connecting_then_noticed_once_after_2_min_then_connected_is_logged() {
+    let t0 = Instant::now();
+    let mut core = Core::new(Settings::default());
+    let v = core.view(t0);
+    assert_eq!(v.health, Health::Starting);
+    assert_eq!(v.connecting.as_deref(), Some("MeltAlarm · looking for the PSU…"));
+
+    let o = core.handle(Event::SourcePending("PSU found but not answering (Timeout)".into()), t0);
+    assert_eq!(o.next_wake, Some(t0 + NOT_CONNECTED_AFTER), "wakes up to report after 2 min");
+    let v = core.view(t0);
+    assert!(matches!(v.health, Health::Connecting { .. }));
+    assert_eq!(v.connecting.as_deref(), Some("MeltAlarm · connecting to the PSU…"));
+    assert!(v.notice.is_none() && v.connectors.is_empty());
+
+    let o = core.handle(Event::Wake, t0 + NOT_CONNECTED_AFTER - Duration::from_secs(1));
+    assert!(o.log.is_empty());
+    let o = core.handle(Event::Wake, t0 + NOT_CONNECTED_AFTER);
+    assert_eq!(o.log, [LogEvent::NotConnected { reason: "PSU found but not answering (Timeout)".into() }]);
+    let n = core.view(t0 + NOT_CONNECTED_AFTER).notice.expect("one notice");
+    assert!(n.text.starts_with("PSU found but not answering (Timeout). MeltAlarm keeps trying"));
+    // Repeated pending reports and wakes never repeat it.
+    core.handle(Event::SourcePending("PSU found but not answering (Timeout)".into()), t0 + Duration::from_secs(200));
+    assert!(core.handle(Event::Wake, t0 + Duration::from_secs(300)).log.is_empty());
+    assert_eq!(core.view(t0 + Duration::from_secs(300)).notice.map(|n| n.id), Some(n.id));
+
+    let o = core.handle(Event::SourceConnected(info()), t0 + Duration::from_secs(158));
+    assert_eq!(o.log, [LogEvent::Connected { model: "MSI MPG Ai1300TS".into(), after: Duration::from_secs(158) }]);
+    let v = core.view(t0 + Duration::from_secs(158));
+    assert!(v.connecting.is_none() && v.notice.is_none());
+}
+
+#[test]
+fn quick_connect_after_pending_logs_nothing() {
+    let t0 = Instant::now();
+    let mut core = Core::new(Settings::default());
+    core.handle(Event::SourcePending("busy".into()), t0);
+    let o = core.handle(Event::SourceConnected(info()), t0 + Duration::from_secs(4));
+    assert!(o.log.is_empty(), "a normal few-second connect at boot is not an event");
+}
