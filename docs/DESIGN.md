@@ -41,6 +41,25 @@ Principle: **quiet when fine, unmistakable when not.**
   | not connected | squares at 28 % opacity |
   | PSU attention (Safeguard+ off or fault flag) | amber bar under the glyph |
 
+## App icon
+
+The exe's own icon, seen in the Start menu, Installed apps, the UAC prompt, Explorer and notification headers. *Added 2026-09-28, after the first install showed Windows' generic icon.*
+
+- The tray glyph's six squares, `#F2F2F2`, centered on a rounded tile `#1F1F1F` (corner radius 20 %). From 24 px up, a 1 px inner edge of white at 12 % keeps the tile visible on dark backgrounds.
+- Neutral on purpose: color stays reserved for state ("color = state only").
+- Drawn separately at each size (16, 20, 24, 32, 40, 48, 64, 96, 128 px), with squares snapped to whole pixels, never scaled from one master. At 16 px: squares 3×3, gap 1.
+- The app name everywhere is just **MeltAlarm** (the exe's FileDescription), never a tagline.
+
+## Notifications
+
+Windows notifications (toasts), sent through the tray icon. Rare: install welcome, second launch while connecting, PSU not reachable after 2 min. **Alarms are never notifications**: the notch owns them.
+
+- Header: supplied by Windows: the live tray glyph and "MeltAlarm" (the exe's FileDescription).
+- **No icon in the body.** The title carries the meaning; a warning triangle for good news is wrong, and a stretched glyph is worse.
+- Title: what happened, sentence case, ≤ 48 characters. Text: at most two short sentences; no long menu paths. If there is something to do, clicking the notification does it.
+- **Info** (welcome, already running): silent. **Warning** (PSU not reachable): the default notification sound.
+- Welcome after install: *"MeltAlarm is running"* / *"Click here to keep its icon visible on the taskbar."* The click opens Taskbar settings.
+
 ## Popup (360 px wide, Windows 11 flyout)
 
 From top to bottom:

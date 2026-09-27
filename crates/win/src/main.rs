@@ -11,6 +11,7 @@ mod autostart;
 mod gfx;
 mod glyph;
 mod lifecycle;
+mod paint;
 mod overlay;
 mod popup;
 #[cfg(feature = "simulate")]
@@ -39,6 +40,7 @@ use windows::core::{HSTRING, PCWSTR, w};
 const WM_WAKE: u32 = WM_APP + 2;
 const NIN_SELECT: u32 = WM_USER;
 const NIN_KEYSELECT: u32 = WM_USER | 1;
+const NIN_BALLOONUSERCLICK: u32 = WM_USER + 5;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 const PBT_APMSUSPEND: u32 = 0x4;
 const PBT_APMRESUMESUSPEND: u32 = 0x7;
@@ -95,6 +97,8 @@ struct App {
     control_msg: u32,
     /// Just installed: explain how to keep the icon visible (Spec §7.1).
     welcome: bool,
+    /// What a click on the current notification opens.
+    notice_click: Option<&'static str>,
 }
 
 fn with_app<R>(f: impl FnOnce(&mut App) -> R) -> Option<R> {
@@ -136,15 +140,14 @@ impl App {
         if let Some(n) = &view.notice
             && self.notice_shown != Some(n.id)
         {
-            self.tray.notify(&n.title, &n.text);
+            self.tray.notify(tray::Notice::Warning, &n.title, &n.text);
+            self.notice_click = None;
             self.notice_shown = Some(n.id);
         }
         if self.welcome && self.tray.has_icons() {
             self.welcome = false;
-            self.tray.notify(
-                "MeltAlarm is installed and running",
-                "To keep its icon visible: Settings → Personalization → Taskbar → Other system tray icons → MeltAlarm.",
-            );
+            self.tray.notify(tray::Notice::Info, "MeltAlarm is running", "Click here to keep its icon visible on the taskbar.");
+            self.notice_click = Some("ms-settings:taskbar");
         }
         if self.popup_on_start && !view.connectors.is_empty() {
             self.popup_on_start = false;
@@ -218,6 +221,12 @@ impl App {
                         self.popup.toggle(id.saturating_sub(1) as usize, rect, &self.gfx, &view, self.light);
                         (handled, None)
                     }
+                    NIN_BALLOONUSERCLICK => {
+                        if let Some(target) = self.notice_click.take() {
+                            sys::open_path(std::path::Path::new(target));
+                        }
+                        (handled, None)
+                    }
                     WM_CONTEXTMENU => {
                         let (x, y) = ((wp.0 & 0xFFFF) as i16 as i32, ((wp.0 >> 16) & 0xFFFF) as i16 as i32);
                         (handled, Some(Deferred::Menu(x, y)))
@@ -272,7 +281,11 @@ impl App {
                 self.popup.toggle(i, rect, &self.gfx, &view, self.light);
             }
             Some(_) => {}
-            None => self.tray.notify("MeltAlarm is already running", view.connecting.as_deref().unwrap_or("MeltAlarm")),
+            None => {
+                let text = view.connecting.as_deref().and_then(|t| t.strip_prefix("MeltAlarm · ")).unwrap_or("Connecting to the PSU…");
+                self.tray.notify(tray::Notice::Info, "MeltAlarm is already running", &capitalize(text));
+                self.notice_click = None;
+            }
         }
     }
 
@@ -350,6 +363,11 @@ impl App {
         self.popup.hide();
         self.tray.remove_all();
     }
+}
+
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
 }
 
 fn run_deferred(hwnd: HWND, d: Deferred) {
@@ -583,6 +601,7 @@ fn main() {
             portable,
             control_msg: lifecycle::control_message(),
             welcome: std::env::args().any(|a| a == "--installed"),
+            notice_click: None,
         })
     });
     if cfg!(feature = "simulate") && std::env::args().any(|a| a == "--test-alarm") {

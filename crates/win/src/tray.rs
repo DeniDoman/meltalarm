@@ -6,7 +6,7 @@ use meltalarm_core::ViewModel;
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_WARNING, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NOTIFYICON_VERSION_4,
+    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_NONE, NIIF_NOSOUND, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NOTIFYICON_VERSION_4,
     NOTIFYICONDATAW, NOTIFYICONIDENTIFIER, Shell_NotifyIconGetRect, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, HICON, SM_CXSMICON};
@@ -25,6 +25,13 @@ struct Shown {
 pub struct Tray {
     hwnd: HWND,
     shown: HashMap<u32, Shown>,
+}
+
+/// docs/DESIGN.md "Notifications": no body icon; info is silent, a warning plays the sound.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Notice {
+    Info,
+    Warning,
 }
 
 /// Tray icon id for a connector position in `ViewModel::connectors`.
@@ -132,12 +139,13 @@ impl Tray {
         }
     }
 
-    /// A Windows notification balloon from one of our icons (the first shown one).
-    pub fn notify(&self, title: &str, text: &str) {
+    /// A Windows notification from one of our icons (the first shown one). The header's icon
+    /// and name come from the exe (app icon, FileDescription).
+    pub fn notify(&self, kind: Notice, title: &str, text: &str) {
         let Some(&id) = self.shown.keys().min() else { return };
         let mut nid = self.base(id);
         nid.uFlags = NIF_INFO;
-        nid.dwInfoFlags = NIIF_WARNING;
+        nid.dwInfoFlags = if kind == Notice::Info { NIIF_NONE | NIIF_NOSOUND } else { NIIF_NONE };
         for (d, s) in nid.szInfoTitle.iter_mut().zip(title.encode_utf16().take(63)) {
             *d = s;
         }
