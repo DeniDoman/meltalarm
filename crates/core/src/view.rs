@@ -250,7 +250,9 @@ impl Core {
             _ => None,
         });
 
-        let mut tooltip = format!("MeltAlarm · {} · ", c.label);
+        // One line: the shell wraps tray tips at about 50 characters. "12V-2x6 #1" → "#1".
+        let short = c.label.rsplit(' ').next().unwrap_or(&c.label);
+        let mut tooltip = format!("MeltAlarm · {short} · ");
         if no_data {
             tooltip.push_str("No data");
         } else if alarm {
@@ -258,9 +260,9 @@ impl Core {
         } else if !present {
             tooltip.push_str("Not connected");
         } else {
-            tooltip.push_str("Normal");
+            tooltip.push_str("OK");
             if let (Some((_, max)), Some(spread)) = (c.eval.max, c.eval.spread) {
-                tooltip.push_str(&format!(" · max {} · spread {}", amps(max), amps(spread)));
+                tooltip.push_str(&format!(" · max {max:.1}A · Δ {spread:.1}A"));
             }
         }
 

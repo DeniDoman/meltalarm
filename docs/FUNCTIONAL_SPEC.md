@@ -332,7 +332,7 @@ The app never re-enables it (read-only).
   - **grey**: NO DATA, or connector not connected
   - **connecting**: before the first successful connection, a single hollow icon with the tooltip *"MeltAlarm · connecting to the PSU…"* (§5.1)
   - markers for PSU-fault flags and Safeguard+ OFF
-- Tooltip: `MeltAlarm · 12V-2x6 #1 · Normal · max 8.6 A · spread 0.7 A`
+- Tooltip, one line (Windows wraps tray tips at about 50 characters): `MeltAlarm · #1 · OK · max 8.6A · Δ 0.7A` (Δ = spread). Other states: `No data`, `Not connected`, `PSU ALARM: <reason>`.
 - Left click toggles the status popup for **that icon's connector**.
 - Right click opens a menu: *Settings…*, *Open alarm log*, *Exit* (Exit asks for confirmation: "Monitoring will stop"). The menu header shows the app version.
 - Windows 11 hides new tray icons in the overflow area by default. First run explains how to pin the icon.

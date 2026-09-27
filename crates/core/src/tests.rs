@@ -113,6 +113,8 @@ fn first_report_tracks_the_connector_in_use_and_logs_config() {
     assert_eq!(v.connectors[0].glyph, Glyph::Normal);
     assert_eq!(v.connectors[1].glyph, Glyph::NotConnected);
     assert!(v.alarm.is_none() && v.audio.is_none());
+    assert_eq!(v.connectors[0].tooltip, "MeltAlarm · #1 · OK · max 0.1A · Δ 0.0A");
+    assert_eq!(v.connectors[1].tooltip, "MeltAlarm · #2 · Not connected");
 }
 
 #[test]
