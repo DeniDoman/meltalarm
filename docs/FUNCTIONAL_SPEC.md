@@ -1,6 +1,6 @@
 # MeltAlarm — Functional Specification
 
-**Status:** v2.1 · **Date:** 2026-09-28 · v2.1: the FA 51 connect handshake (F19), device identification by USB ID, startup that never gives up on a present PSU
+**Status:** v2.2 · **Date:** 2026-09-28 · v2.2: distribution as one self-installing exe: install, update, uninstall (§4) · v2.1: the FA 51 connect handshake (F19), device identification by USB ID, startup that never gives up on a present PSU
 
 **Supported hardware:**
 - MSI **MPG Ai1300TS** and **MPG Ai1600TS** PSUs, connected by USB.
@@ -67,8 +67,10 @@ MeltAlarm logs enough on the first real event to settle these (§9).
 - event log
 - compatibility check
 - autostart
+- install, update and uninstall, done by the exe itself (§4)
 
 **Not in v1:**
+- Automatic update checks (the app uses no network, §10). Package managers such as winget.
 - **VR-specific visuals** (SteamVR overlay, OpenXR layer). They are future work, after v1 feedback. In v1, VR users get the alarm through sound and voice.
 - Changing the GPU power limit.
 - Automatic OS shutdown.
@@ -89,14 +91,100 @@ MeltAlarm logs enough on the first real event to settle these (§9).
 
 ---
 
-## 4. Process model, privileges, autostart
+## 4. Process model, privileges, distribution
 
-- **Single executable** (Rust), no installer, and no external DLLs (hidapi is linked through its `windows-native` backend).
+**Lifecycle rules for every platform.** §4.1–4.8 are how Windows meets them. Linux (next iteration) meets them in its own way (ARCHITECTURE §11.1).
+
+| # | Rule | Windows | Linux (planned) |
+|---|---|---|---|
+| L1 | Install, update and uninstall use the **platform's normal mechanism**. | The exe does it itself; no package manager is assumed. | The distro package or AppImage. The app offers no install/update/uninstall of its own. |
+| L2 | Autostart never grants more rights than the program file's location protects. | Elevated at logon → only the copy in Program Files (§4.3). | Runs unprivileged; device access comes from a udev rule installed by the package. |
+| L3 | Program and user data are separate. Update and uninstall keep user data unless the user asks otherwise. | §4.3, §4.7 | XDG config/state folders |
+| L4 | Where the app replaces itself, the user is never left without a working monitor, and replacement is refused during a PSU alarm. | §4.6 | not applicable: the package manager replaces the file, and the running instance continues until restarted |
+| L5 | Every monitoring gap caused by install, update or uninstall is logged (§9). | §4.6, §4.7 | not applicable (no gaps: the running instance is not stopped) |
+| L6 | A second launch never starts a second monitor; it brings the running one forward. | §4.1 | same |
+
+### 4.1 Process and privileges
+- **Single executable** (Rust) and no external DLLs (hidapi is linked through its `windows-native` backend). There is **no separate installer**: the same file runs, installs, updates and uninstalls itself (§4.4–4.7).
 - **Runs elevated** (manifest `requireAdministrator`). Elevation is needed because of F3: any other PSU reader may own the mutex, and admin is the minimum that can use it. A SYSTEM service is not needed.
-- **Autostart** is a Task Scheduler task `MeltAlarm` that runs at logon of the current user with "Run with highest privileges". It starts elevated **without a UAC prompt**. The *Run at startup* setting creates or deletes this task.
+- **Autostart** is a Task Scheduler task `MeltAlarm` that runs at logon of the user who enabled it, with "Run with highest privileges". It starts elevated **without a UAC prompt**. It always starts the **installed copy** (§4.3), never a downloaded file.
 - A manual launch shows one UAC prompt (expected).
-- **Single instance.** A second launch exits silently. If the first instance has a window open, the second launch brings it forward.
+- **Single instance.** A second launch of the same copy never starts a second monitor. It brings the running instance forward (its Settings window; before that window exists, the status popup of the first tracked connector) and exits.
 - Side benefit of elevation: the alarm overlay can also appear above elevated apps.
+
+### 4.2 Distribution
+- A GitHub release holds the exe and a `SHA256SUMS` file. The downloaded file's name and folder don't matter (browsers may rename it, e.g. `meltalarm (1).exe`).
+- v1 is unsigned. On first launch Windows SmartScreen shows "Windows protected your PC"; the README explains *More info → Run anyway* and how to check the SHA256.
+- The app uses no network, so it never checks for updates. Users learn about new versions from GitHub (*Watch → Releases*).
+
+### 4.3 Where it lives, and why
+
+| What | Where | Scope |
+|---|---|---|
+| Program | `%ProgramFiles%\MeltAlarm\meltalarm.exe` | machine |
+| Start menu shortcut | *MeltAlarm*, in the all-users Start menu, so the app can be started again after *Exit* | machine |
+| Installed-apps entry | *Settings → Apps → Installed apps*: name, version, *Uninstall* | machine |
+| Startup task | `MeltAlarm` (§4.1) | the user who enabled it |
+| Settings | `%APPDATA%\MeltAlarm\settings.toml` (§7.3) | user |
+| Alarm log | `%LOCALAPPDATA%\MeltAlarm\alarms.log` (§9) | user |
+
+**Why Program Files.** The startup task gives the program administrator rights at every logon without asking. If the task pointed to a folder the user can write to (Downloads, `%LOCALAPPDATA%`, the desktop), any unelevated program could replace the file and receive administrator rights at the next logon. Program Files is writable only by administrators. Hence the rule: **the startup task only ever points to the installed copy in Program Files.**
+
+### 4.4 What a launch does
+Checked in this order when the exe starts (unless started with `--portable` or `--uninstall`):
+
+1. **This is the installed copy** → normal start (single instance, §4.1).
+2. **A MeltAlarm is already running from this same file** → second launch (§4.1).
+3. **Nothing is installed** → the Install dialog (§4.5).
+4. **Another copy is installed** → compare versions (§4.6).
+
+The dialogs appear before monitoring starts, and they work with or without a PSU connected.
+
+### 4.5 Install
+
+> **Install MeltAlarm 0.2.0?**
+> It will be copied to Program Files and get a Start menu entry. You can uninstall it from Installed apps.
+> ☑ Start with Windows
+> **[Install]** [Run without installing]
+
+- **Install:**
+  1. stops any running MeltAlarm (from any folder)
+  2. copies itself to Program Files, creates the shortcut and the installed-apps entry
+  3. creates the startup task if *Start with Windows* is checked, and stores that choice as the *Run at Windows startup* setting
+  4. starts the installed copy, which shows the "pin the tray icon" hint (§7.1); this copy exits. The downloaded file can then be deleted.
+- **Install is all or nothing.** If a step fails (disk, antivirus, permissions), the steps already done are undone, an error names the failed step, and this copy continues as a portable one.
+- **Run without installing** (portable): monitoring works normally, with no startup task. *Run at Windows startup* is replaced by **Install…**, which opens this dialog. The question is asked on every launch of a portable copy (use `--portable` to skip it, §4.8).
+
+### 4.6 Update
+Updates are manual: the user downloads the new exe and runs it. When another copy is installed, the versions are compared:
+
+| This file vs installed | Result |
+|---|---|
+| newer | **"Update MeltAlarm 0.1.0 → 0.2.0?"** [Update] [Cancel] |
+| older | **"Replace MeltAlarm 0.2.0 with the older 0.1.0?"** [Replace] [Cancel]. This is how a bad update is rolled back. |
+| same | no dialog: acts as a second launch (§4.1). If the installed copy isn't running, it is started. |
+
+- **Update / Replace:** the running MeltAlarm is stopped (logged, §9), the installed file replaced, the installed-apps version updated, and the installed copy started. Settings, the log, the startup task and pinned tray icons are kept. Monitoring pauses for a few seconds.
+- **Refused during a PSU alarm:** "An alarm is active. Update after it clears." Stopping the app would silence the alarm.
+- **Never leaves the user without a working MeltAlarm.** If replacing fails, the previous version stays installed and is started again.
+- A running MeltAlarm that hasn't closed 5 s after being asked (an older version that doesn't understand the request, or a hung one) is terminated.
+
+### 4.7 Uninstall
+Two entry points with the same result: **Uninstall…** in Settings (in v0, the tray menu) and the installed-apps entry (which runs `meltalarm.exe --uninstall`).
+
+> **Uninstall MeltAlarm?**
+> Monitoring stops and MeltAlarm will no longer start with Windows.
+> ☐ Also delete my settings and the alarm log
+> **[Uninstall]** [Cancel]
+
+- Stops any running MeltAlarm, then removes the startup task, the Start menu shortcut, the installed-apps entry and the program folder. With the box checked, it also removes the settings and log folders.
+- The box is **unchecked by default**: the alarm log may be the only record of a cable incident.
+- Nothing else is left on the machine (and §3.4 still holds: other PSU software is never touched).
+- A portable copy is never installed, so it offers no *Uninstall*. Deleting the file removes it; its settings and log stay in the folders of §4.3.
+
+### 4.8 Developer runs
+- `--portable` skips §4.4–4.6: no dialogs, no install, no startup task. Used for development, CI and deliberate portable use.
+- `simulate` builds (dev only) never install. They run unelevated and use their own data folders.
 
 ---
 
@@ -246,7 +334,7 @@ The app never re-enables it (read-only).
   - markers for PSU-fault flags and Safeguard+ OFF
 - Tooltip: `MeltAlarm · 12V-2x6 #1 · Normal · max 8.6 A · spread 0.7 A`
 - Left click toggles the status popup for **that icon's connector**.
-- Right click opens a menu: *Settings…*, *Open alarm log*, *Exit* (Exit asks for confirmation: "Monitoring will stop").
+- Right click opens a menu: *Settings…*, *Open alarm log*, *Exit* (Exit asks for confirmation: "Monitoring will stop"). The menu header shows the app version.
 - Windows 11 hides new tray icons in the overflow area by default. First run explains how to pin the icon.
 
 ### 7.2 Status popup
@@ -263,15 +351,15 @@ The app never re-enables it (read-only).
 
 ### 7.3 Settings window
 
-> **v0 (first personal build):** there is no settings window yet. The same three settings plus *Test alarm* sit in the tray right-click menu as checkmark items (ARCHITECTURE §7). The window below arrives in v1, and the menu then shrinks to *Settings… / Open alarm log / Exit*.
+> **v0 (first personal build):** there is no settings window yet. The same three settings plus *Test alarm* sit in the tray right-click menu as checkmark items (ARCHITECTURE §7), together with *Install…* (portable copy) or *Uninstall…* (installed copy). The window below arrives in v1, and the menu then shrinks to *Settings… / Open alarm log / Exit*.
 | Setting | Default | Notes |
 |---|---|---|
-| Run at Windows startup | **On** | Creates or removes the scheduled task (§4) |
+| Run at Windows startup | **On** | Installed copy only: creates or removes the startup task (§4.1). A portable copy shows an **Install…** button here instead (§4.5). |
 | Track 12V-2x6 #1 ☐ ● / Track 12V-2x6 #2 ☐ ● | First run: the connector(s) currently *connected*; if none, #1 | At least one must stay checked (the last checked box is disabled). The **●** hint dot is live: green = connected, red = not connected (§6.5). |
 | Alarm (overlay + sound + voice) | **On** | Master switch. Off means tray colors and log only. The log is always written. |
 
-- Read-only info block: PSU model, firmware, serial, and the Safeguard+ state and thresholds read from `C0` (e.g. "Enabled · OCP 12 A · Imbalance 5.5 A · trigger 20 s · power cut after 180 s").
-- Buttons: **Test alarm** (full overlay + sound + voice with a "TEST" label) and **Open log folder**.
+- Read-only info block: MeltAlarm version, PSU model, firmware, serial, and the Safeguard+ state and thresholds read from `C0` (e.g. "Enabled · OCP 12 A · Imbalance 5.5 A · trigger 20 s · power cut after 180 s").
+- Buttons: **Test alarm** (full overlay + sound + voice with a "TEST" label), **Open log folder**, and **Uninstall…** (installed copy only, §4.7).
 - Settings apply immediately. They are stored in `%APPDATA%\MeltAlarm\settings.toml`.
 
 ---
@@ -357,6 +445,10 @@ The alarm fires when the `C1` status is non-zero on **any** connector, tracked o
 2026-09-28 00:02:00 | STOPPED       | Monitoring not started: no supported PSU found                (startup exit, §5.1)
 2026-09-27 20:00:00 | CONFIG        | Safeguard+ ON · OCP 12.0 A · Diff 5.5 A · trig 20/20 s · cut 180 s   (at start and on change)
 2026-09-27 20:00:00 | CONFIG        | WARNING: Safeguard+ is OFF on the PSU
+2026-10-02 18:00:00 | INSTALL       | MeltAlarm 0.2.0 installed · starts with Windows                (§4.5)
+2026-10-05 18:00:00 | STOPPED       | Monitoring stopped: updating to 0.3.0                           (by the running instance, §4.6)
+2026-10-05 18:00:02 | INSTALL       | updated 0.2.0 → 0.3.0                                            (or: replaced 0.3.0 with 0.2.0)
+2026-10-09 18:00:00 | STOPPED       | Monitoring stopped: uninstalled                                 (only if the log is kept, §4.7)
 ```
 
 - A RED episode is **merged** if it re-enters within 10 s, so one noisy minute produces one START/END pair.
@@ -374,14 +466,14 @@ The alarm fires when the `C1` status is non-zero on **any** connector, tracked o
 | UI | English. Per-monitor DPI-aware. Popup and Settings follow the system light/dark theme; the alarm overlay uses its own fixed high-contrast scheme. |
 | Robustness | Survives USB replug, sleep/resume, explorer.exe restart (tray icons re-added), and display changes (overlay re-laid out). |
 | Coexistence | Any combination of MSI Center, Afterburner PSU plugin and HWiNFO64 (§5.2). |
-| Network | None. |
+| Network | None. No update check (§4.2). |
 | Tech | Rust; Win32 + Direct2D/DirectWrite in software mode (see DESIGN.md). |
 
 ---
 
 ## 11. Acceptance tests
 - **T1.** The read-only contract unit test passes. A grep shows a single HID write call site.
-- **T2.** The app starts elevated via the scheduled task with no UAC prompt. A second instance exits.
+- **T2.** The installed app starts elevated via the scheduled task with no UAC prompt. A second launch brings the running instance forward and exits.
 - **T3. Coexistence matrix**, 30 min each: MeltAlarm alone; + MSI Center; + HWiNFO64; + Afterburner PSU plugin; all together. Pass criteria: no NO DATA, fewer than 0.1 % failed samples, and the other tools keep showing sane values.
 - **T4.** Unplug the PSU USB: grey icons within ≤ 3 s, NO DATA logged. Replug: live again, DATA BACK logged.
 - **T5.** Colors on a synthetic frame feed (test build only):
@@ -403,6 +495,10 @@ The alarm fires when the `C1` status is non-zero on **any** connector, tracked o
 - **T11. Cold boot, no MSI software** (MSI Center service stopped, Afterburner PSU plugin off, HWiNFO closed): after logon MeltAlarm connects without any error, and the log shows no NOT CONNECTED line. This is the scenario that failed on 2026-09-28 (F19).
 - **T12. Cold boot with MSI Center running**: both connect. MSI Center keeps showing sane values while MeltAlarm handshakes and reconnects (the handshake is repeated by design).
 - **T13. Silent PSU** (simulated source that is present but never answers): the hollow "connecting" icon appears, the notification comes once after 2 min, the app never exits, and it connects once the PSU answers.
+- **T14. Install** from a downloaded file on a machine without MeltAlarm: one dialog; afterwards the program is in Program Files, the shortcut and installed-apps entry exist, the startup task points to Program Files, the downloaded file can be deleted, and after a reboot the app starts with no UAC prompt. With a simulated failure (read-only target), nothing is left behind and the copy runs portable.
+- **T15. Update** while the installed older version is monitoring: one dialog; the gap is logged (STOPPED, INSTALL); settings, log, startup task and pinned icons are kept. Rolling back to the older file works the same way. Refused while a PSU alarm is active (*Test alarm* doesn't count). A failed replace leaves the old version running.
+- **T16. Uninstall** from the tray and from Installed apps: task, shortcut, entry and program folder are gone; settings and log remain unless the box was checked.
+- **T17. Portable:** *Run without installing* and `--portable` monitor normally and create no task, shortcut or entry.
 
 ---
 

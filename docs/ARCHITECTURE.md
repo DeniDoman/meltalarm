@@ -1,6 +1,6 @@
 # MeltAlarm — Software Architecture v2
 
-**Status:** v2.1 · **Date:** 2026-09-28 · **Supersedes:** v2 (2026-09-27) · v2.1: connect handshake, `Discovery::NotReady`, a startup that never gives up on a present device (Spec v2.1, F19) · **Inputs:** `FUNCTIONAL_SPEC.md`, `DESIGN.md`
+**Status:** v2.1 · **Date:** 2026-09-28 · **Supersedes:** v2 (2026-09-27) · v2.2: program lifecycle (install, update, uninstall, autostart) split into a portable crate plus per-OS backends (Spec v2.2 §4, §7.1) · v2.1: connect handshake, `Discovery::NotReady`, a startup that never gives up on a present device (Spec v2.1, F19) · **Inputs:** `FUNCTIONAL_SPEC.md`, `DESIGN.md`
 
 **What changed from v1:**
 - The alarm logic no longer speaks "MSI". It works on a **vendor-neutral model**, so other devices can be added later.
@@ -52,6 +52,8 @@
                                                                   └───────────────────────────┘
 ```
 
+Beside this stack, `meltalarm-lifecycle` (portable, std only) decides what a launch does and runs install/update/uninstall steps that each frontend supplies (§7.1).
+
 **Dependency rule:** arrows point toward stability. `model` depends on nothing. `core` depends only on `model`. Sources know `model` + `source-api`, never `core`. `runtime` knows `core` + `source-api`, never a concrete source. Only a frontend's `main` (the composition root) names concrete drivers.
 
 ---
@@ -65,7 +67,8 @@
 | `meltalarm-source-api` | lib | model, hidapi | ✅ | `Driver` / `Source` traits, `HidContext` (one shared `HidApi`), source authoring rules (§4.2) |
 | `meltalarm-source-msi` | lib | model, source-api, hidapi, windows-sys (cfg windows) | ✅ (lock is cfg) | MSI protocol: closed request set, frame decoding, transactions, `Global\MSI_PSU_Mutex` (Windows), mapping to the model (§4.3) |
 | `meltalarm-runtime` | lib | core, source-api | ✅ | Portable host: acquisition thread, discovery and reconnect, settings persistence, log sink, timers and wake-ups (§6) |
-| `meltalarm-win` | bin `meltalarm` | runtime, core, source-msi, windows | ❌ Windows | Tray, menu, popup, overlay, audio, voice, hotkey, autostart, single instance, power events (§7) |
+| `meltalarm-lifecycle` | lib, std only | — | ✅ | Program lifecycle, OS-free: launch decision (Spec §4.4), version compare, all-or-nothing step runner, the `Autostart` / `Instances` / `Step` traits (§7.1) |
+| `meltalarm-win` | bin `meltalarm` | runtime, core, lifecycle, source-msi, windows | ❌ Windows | Tray, menu, popup, overlay, audio, voice, hotkey, power events, and the Windows lifecycle backend: install steps, Task Scheduler autostart, single instance + control window (§7, §7.1) |
 | `psu-probe` (tools/) | bin | source-msi | ✅ | Read-only diagnostics, serial redacted, for hardware reports and porting (v1) |
 | *future* `meltalarm-linux` | bin | runtime, core, sources | Linux | §11.1 |
 | *future* `meltalarm-source-<vendor>` | lib | model, source-api | per device | §11.2 |
@@ -287,7 +290,7 @@ pub struct Output { pub log: Vec<LogEvent>, pub settings_changed: Option<Setting
 | Overlay | Visible on every monitor iff `alarm.is_some()` |
 | Audio | Player running iff `audio.is_some()`; restart if the script changed |
 | Hotkey | Ctrl+Alt+G registered iff the overlay is visible and snooze is allowed |
-| Autostart | Task Scheduler state made to match `settings.run_at_startup`, also repairing the exe path, at start and on change. If the task operation fails, the frontend sends `SetRunAtStartup(<actual state>)`, so the setting and the menu checkmark always show reality, and it adds a one-time error note. |
+| Autostart | **Installed copy only** (`Launch::Monitor { portable: false }`, §7.1): Task Scheduler state made to match `settings.run_at_startup`, also repairing the target path, at start and on change. A portable copy never creates, deletes or repoints the task. If the task operation fails, the frontend sends `SetRunAtStartup(<actual state>)`, so the setting and the menu checkmark always show reality, and it adds a one-time error note. |
 
 **Modules:**
 
@@ -300,17 +303,72 @@ pub struct Output { pub log: Vec<LogEvent>, pub settings_changed: Option<Setting
 | `popup` | Solid surfaces, 150 ms rise | Acrylic (R1) |
 | `overlay` | Layered, no-activate, per-monitor, topmost re-assert, 200 ms drop | — |
 | `audio` | Alarm thread: `PlaySoundW` file + SAPI `ISpVoice` executing the `AudioScript` | — |
-| `hotkey`, `autostart` (COM `ITaskService`), `power` | ✓ | — |
+| `hotkey`, `autostart` (schtasks XML), `power` | ✓ | `autostart` implements `lifecycle::Autostart`; COM `ITaskService` optional |
+| `lifecycle` | — | Windows backend of §7.1: dialogs, steps, control window, `--uninstall` |
 | `settings` window | — | Win11 window per DESIGN §Settings |
 | Win10 fallback | Solid colors (free, since v0 is solid) | Verified pass |
 
 **Threads:** UI (frontend + runtime + core), acquisition (runtime), and audio (while sounding). Memory rule: render targets exist only while a window is visible; SAPI lives only on the audio thread.
+
+### 7.1 Program lifecycle (Spec §4)
+
+The same split as sources: **what** to do is portable and tested everywhere; **how** is per OS.
+
+**`meltalarm-lifecycle` (portable, std only, no OS calls):**
+
+```rust
+pub enum Policy { SelfManaged, PackageManaged }      // Spec L1; chosen by the frontend (Windows / Linux)
+pub enum Flag { None, Portable, Uninstall }           // command line
+pub struct Copy { pub path: PathBuf, pub version: Version }
+pub struct Facts { pub policy: Policy, pub flag: Flag, pub this: Copy,
+                   pub installed: Option<Copy>, pub same_file_running: bool }
+pub enum Launch {
+    Monitor { portable: bool },            // normal start; portable → no autostart, "Install…" offered
+    HandOff,                               // L6: bring the running instance forward, exit
+    OfferInstall,                          // §4.5
+    OfferUpdate { from: Version, to: Version },
+    OfferReplace { from: Version, to: Version },  // downgrade = rollback
+    StartInstalled,                        // same version: hand off to the installed copy
+    Uninstall,                             // §4.7
+}
+pub fn decide(f: &Facts) -> Launch;       // Spec §4.4, table-driven tests; PackageManaged → Monitor/HandOff only
+
+pub trait Step { fn name(&self) -> &str; fn apply(&mut self) -> Result<(), String>; fn undo(&mut self); }
+pub fn run_atomic(steps: Vec<Box<dyn Step>>) -> Result<(), Failed>;   // install/update: undo done steps in reverse
+pub fn run_best_effort(steps: Vec<Box<dyn Step>>) -> Vec<Failed>;     // uninstall: keep going, report leftovers
+
+pub trait Autostart { fn target(&self) -> Option<PathBuf>; fn set(&self, target: Option<&Path>) -> Result<(), String>; }
+pub trait Instances { fn running(&self) -> Option<Box<dyn Running>>; }
+pub trait Running { fn show(&self); fn alarm_active(&self) -> Option<bool>; fn stop(&self, grace: Duration) -> Result<(), String>; }
+```
+
+- **Plans** (ordered step lists) are built by the frontend from its own `Step`s; the runner, the ordering rules and the rollback are shared.
+- **Log lines:** `core::LogEvent` gains `Installed { version, autostart }` and `Updated { from, to }`; the gaps use the existing `MonitoringStopped`. `runtime` exposes `log::append(paths, wall, event)` so a process that never starts monitoring (installer, `--uninstall`) writes the same file.
+- **Version:** `CARGO_PKG_VERSION`, also embedded as the exe's VERSIONINFO so the installed copy's version is read from the file itself, without running it.
+
+**Windows backend (`meltalarm-win::lifecycle`, `Policy::SelfManaged`):**
+
+| Piece | Implementation |
+|---|---|
+| Installed copy | `FOLDERID_ProgramFilesX64\MeltAlarm\meltalarm.exe`; version via `GetFileVersionInfoW` |
+| Same file? | File identity (volume serial + file index), not path strings |
+| Install plan | StopRunning → CopyProgram (write `meltalarm.exe.new`, rename into place) → StartMenuShortcut (`IShellLinkW`, `FOLDERID_CommonPrograms`) → AppsEntry (`HKLM\…\Uninstall\MeltAlarm`: name, version, publisher, icon, size, `UninstallString = "…\meltalarm.exe" --uninstall`) → Autostart (if chosen) → start the installed copy |
+| Update plan | AlarmGate (`Running::alarm_active`, refuse if `Some(true)`) → StopRunning → ReplaceProgram (rename current → `meltalarm.exe.old`, copy the new file in; undo restores `.old`) → AppsEntry version → start. The next start of the installed copy deletes `.old`. |
+| Uninstall plan | StopRunning → Autostart off → shortcut → AppsEntry → program folder → data folders (if asked). The uninstaller *is* the installed exe: it renames itself out of the folder (allowed for a running image on the same volume), marks that file `MoveFileExW(DELAY_UNTIL_REBOOT)`, and removes the now-empty folder. |
+| Autostart | Existing Task Scheduler XML, target = the installed exe only |
+| Instances | Single-instance mutex (as today) + a message-only **control window** (class `MeltAlarm.Control`): `WM_APP_CONTROL` SHOW / ALARM? / QUIT via `SendMessageTimeoutW`. `stop` = QUIT, wait on the process handle for 5 s, then `TerminateProcess`. Instances without a control window (v0.x, or another session) are found by image name `meltalarm.exe` and stopped the same way. |
+| Elevation | All of it runs in the already-elevated process (manifest), so Program Files and HKLM need no extra prompt. |
+| Dev builds | `--portable` → `Flag::Portable`; `simulate` builds skip lifecycle entirely. |
+
+**Linux backend (next iteration, `Policy::PackageManaged`):** no `Step`s at all: the package installs the binary, the `.desktop` file and the udev rule. `Autostart` = an XDG autostart entry pointing to the packaged binary; `Instances` = a D-Bus name or a socket in `$XDG_RUNTIME_DIR`. `decide` then only ever returns `Monitor { portable: false }` or `HandOff`.
 
 ---
 
 ## 8. Key flows
 
 ```
+Launch:   main → lifecycle::decide(facts) → Monitor → Startup below | HandOff → Running::show → exit
+          | Offer* → dialog → run_atomic(plan) → start installed copy → exit | Uninstall → run_best_effort → exit
 Startup:  main → single instance → Runtime::start (settings loaded) → acquisition discovers every 2 s
           ├─ found (answered, incl. handshake) → SourceConnected → first run picks tracked connectors → tray icons
           ├─ present, silent → SourcePending → hollow "connecting…" icon; retried forever; notice + log after 2 min
@@ -353,19 +411,21 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
 | Audio or voice failure | Overlay still shown; logged once |
 | Overlay failure | Audio still plays |
 | Autostart failure | The menu item shows unchecked, with a note |
+| Install / update step failure | Done steps undone in reverse; error dialog names the step; this copy runs portable (install) or the previous version is restarted (update) |
 | UI thread panic | Panic hook logs the same line |
 
 **Testing:**
 - `model`/`core`: table-driven synthetic feeds for every Spec §6/§8/§9 rule, including sources with missing capabilities (e.g. no `cutoff_after` → no countdown).
 - `source-msi`: golden frames from the reference captures (serial scrubbed), plus the fake `Transport` (foreign frames, stale same-register frames, busy, timeout, disconnect — F17).
 - `runtime`: fake drivers (scripted discovery and failures) and a temp-dir store and log.
+- `lifecycle`: the Spec §4.4 table for both policies, version ordering, and rollback order with fake `Step`s that fail at each position. Runs on Linux CI too.
 - **Simulated source** (cargo feature `simulate`, never in release builds): a `Driver` that replays a scenario file. The UI and every alarm path can be exercised with **no device traffic at all**. It is also a second implementation of the source API, which proves the abstraction.
 - Acceptance T1–T10 run manually.
 
 **Build:**
 - `x86_64-pc-windows-msvc`, static CRT.
 - `build.rs` embeds the manifest (`requireAdministrator` because of the MSI mutex, PerMonitorV2, Common Controls v6, Windows 10/11), the icon and version info.
-- **CI (v1):** Windows (fmt, clippy, test, read-only check, release + SHA256SUMS), **plus Linux** (`cargo test` for model, core, source-api, source-msi, runtime). That keeps the portable crates portable before any Linux frontend exists.
+- **CI (v1):** Windows (fmt, clippy, test, read-only check, release + SHA256SUMS), **plus Linux** (`cargo test` for model, core, source-api, source-msi, runtime, lifecycle). That keeps the portable crates portable before any Linux frontend exists.
 - **Repo:** MIT; `docs/`; the research material (PSU.dll, raw captures, original notes) stays local and git-ignored.
 
 ---
@@ -381,7 +441,9 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
   | Tray | StatusNotifierItem (`ksni`) |
   | Alarm | Critical desktop notification; layer-shell overlay where the compositor supports it (KDE, wlroots; not GNOME) |
   | Sound and voice | PipeWire + speech-dispatcher, executing the same `AudioScript` |
-  | Autostart | systemd user unit |
+  | Autostart | XDG autostart entry (`~/.config/autostart`) via `lifecycle::Autostart`; works on every desktop, and systemd generates a unit from it where used |
+  | Install, update, uninstall | Distro package / AppImage (`lifecycle::Policy::PackageManaged`, Spec L1); the package ships the udev rule |
+  | Single instance | `lifecycle::Instances` over D-Bus or a `$XDG_RUNTIME_DIR` socket |
   | Device access | udev rule, **no root** |
   | Paths | XDG |
 
@@ -410,6 +472,9 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
 | D8 | User-facing text built in `core` | Text per frontend | One tested source of wording across OSes and channels (notch, voice, notification) |
 | D9 | MSI handshake sent on **every connect**, never per tick | Only after reads time out ("minimal touch") | Mirrors the vendor's own clients exactly (deterministic, independent of what other software did since boot); a failure-driven path would be a rarely-exercised branch where bugs hide. Repeated handshakes are routine in MSI's ecosystem (MSI Center + Afterburner). |
 | D10 | A present but silent device is retried forever; exit only when no supported device exists | Give up after a timeout | A safety monitor must not quit because the PSU is slow to answer; "unsupported hardware" (exit) and "not answering yet" (wait) are different situations. |
+| D11 | Windows: one self-installing exe | MSI/WiX or Inno Setup installer; portable only | No second toolchain; one file to verify; an installer would still need custom steps for the elevated task; unsigned installers get harsher SmartScreen treatment. Portable-only broke autostart and left no uninstall. |
+| D12 | Lifecycle = portable decisions (`meltalarm-lifecycle`) + per-OS steps; Linux delegates to the package manager | Lifecycle code only inside `meltalarm-win`; self-install on Linux too | Same pattern as sources; the decision table is tested on Linux CI; Linux users expect packages; nothing Windows-specific reaches the portable crates. |
+| D13 | Autostart only ever targets the protected installed copy | Task follows `current_exe()` (v0) | v0 let a user-writable file start elevated at logon (privilege escalation), and let dev builds repoint the user's task. |
 
 ---
 
@@ -422,6 +487,8 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
 | R3 | UIPI blocks tray messages to the elevated process | v0, first thing | `ChangeWindowMessageFilterEx` |
 | R4 | Idle memory above 5 MB after windows close | v0 measure | Release resources; trim the working set |
 | R5 | Linux HID framing (64/65 bytes) | Linux iteration | Parser already tolerant; verify with the probe |
+| R6 | Defender/SmartScreen heuristics flag an unsigned exe that copies itself to Program Files and creates an elevated logon task | v1, test with Defender on | Plain dialog wording, SHA256SUMS; report false positives to Microsoft; code signing later |
+| R7 | Self-removal of the running installed exe (rename out of the folder) | v1 spike | Mark the whole folder `DELAY_UNTIL_REBOOT` |
 
 ---
 
@@ -453,6 +520,7 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
 - `psu-probe` tool
 - `docs/PROTOCOL.md`, README
 - CI (Windows + Linux crates), release, coexistence run (T3)
+- program lifecycle (§7.1): `meltalarm-lifecycle`, Windows backend, VERSIONINFO, control window; acceptance T14–T17. Migrates the reference PC from the hand-copied `%LOCALAPPDATA%\Programs\MeltAlarm`.
 
 **Next iteration:** Linux frontend (§11.1); new sources on demand (§11.2), plus the local-alarm policy decision for sources without a verdict.
 
