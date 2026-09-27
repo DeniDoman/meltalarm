@@ -343,7 +343,7 @@ pub trait Running { fn show(&self); fn alarm_active(&self) -> Option<bool>; fn s
 ```
 
 - **Plans** (ordered step lists) are built by the frontend from its own `Step`s; the runner, the ordering rules and the rollback are shared.
-- **Log lines:** `core::LogEvent` gains `Installed { version, autostart }` and `Updated { from, to }`; the gaps use the existing `MonitoringStopped`. `runtime` exposes `log::append(paths, wall, event)` so a process that never starts monitoring (installer, `--uninstall`) writes the same file.
+- **Log lines:** `core::LogEvent` gains `Installed { version, autostart }` and `Updated { from, to, downgrade }`; the gaps use the existing `MonitoringStopped`. A process that never starts monitoring (installer, `--uninstall`) writes the same file through `runtime::LogSink`.
 - **Version:** `CARGO_PKG_VERSION`, also embedded as the exe's VERSIONINFO so the installed copy's version is read from the file itself, without running it.
 
 **Windows backend (`meltalarm-win::lifecycle`, `Policy::SelfManaged`):**
@@ -351,14 +351,15 @@ pub trait Running { fn show(&self); fn alarm_active(&self) -> Option<bool>; fn s
 | Piece | Implementation |
 |---|---|
 | Installed copy | `FOLDERID_ProgramFilesX64\MeltAlarm\meltalarm.exe`; version via `GetFileVersionInfoW` |
-| Same file? | File identity (volume serial + file index), not path strings |
+| Same file? | Final paths (`canonicalize`, i.e. `GetFinalPathNameByHandle`), so case, 8.3 names and links don't matter |
 | Install plan | StopRunning → CopyProgram (write `meltalarm.exe.new`, rename into place) → StartMenuShortcut (`IShellLinkW`, `FOLDERID_CommonPrograms`) → AppsEntry (`HKLM\…\Uninstall\MeltAlarm`: name, version, publisher, icon, size, `UninstallString = "…\meltalarm.exe" --uninstall`) → Autostart (if chosen) → start the installed copy |
 | Update plan | AlarmGate (`Running::alarm_active`, refuse if `Some(true)`) → StopRunning → ReplaceProgram (rename current → `meltalarm.exe.old`, copy the new file in; undo restores `.old`) → AppsEntry version → start. The next start of the installed copy deletes `.old`. |
 | Uninstall plan | StopRunning → Autostart off → shortcut → AppsEntry → program folder → data folders (if asked). The uninstaller *is* the installed exe: it renames itself out of the folder (allowed for a running image on the same volume), marks that file `MoveFileExW(DELAY_UNTIL_REBOOT)`, and removes the now-empty folder. |
 | Autostart | Existing Task Scheduler XML, target = the installed exe only |
-| Instances | Single-instance mutex (as today) + a message-only **control window** (class `MeltAlarm.Control`): `WM_APP_CONTROL` SHOW / ALARM? / QUIT via `SendMessageTimeoutW`. `stop` = QUIT, wait on the process handle for 5 s, then `TerminateProcess`. Instances without a control window (v0.x, or another session) are found by image name `meltalarm.exe` and stopped the same way. |
+| Instances | Single-instance mutex (as today). The hidden main window (class `MeltAlarmMain`; simulated builds `MeltAlarmSimMain`) doubles as the **control window**: the registered message `MeltAlarm.Control` with SHOW / ALARM? / QUIT via `SendMessageTimeoutW`. UIPI lets only elevated processes send it. `stop` = QUIT, wait on the process handle for 5 s, then `TerminateProcess`; v0.x has the same window class but not the message, so it is found and terminated after the grace period. Instances in other sessions keep running old code until they restart. |
 | Elevation | All of it runs in the already-elevated process (manifest), so Program Files and HKLM need no extra prompt. |
-| Dev builds | `--portable` → `Flag::Portable`; `simulate` builds skip lifecycle entirely. |
+| Flags | `--portable` (dev, CI), `--install` (tray *Install…* spawns this), `--uninstall` (tray *Uninstall…* and Installed apps), `--installed` (set by the installer: show the pin-the-icon hint once). `simulate` builds skip lifecycle entirely. |
+| Log | The installer process writes STOPPED (if it closed a running instance) and INSTALL after success, through `runtime::LogSink`. |
 
 **Linux backend (next iteration, `Policy::PackageManaged`):** no `Step`s at all: the package installs the binary, the `.desktop` file and the udev rule. `Autostart` = an XDG autostart entry pointing to the packaged binary; `Instances` = a D-Bus name or a socket in `$XDG_RUNTIME_DIR`. `decide` then only ever returns `Monitor { portable: false }` or `HandOff`.
 
@@ -419,6 +420,7 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
 - `source-msi`: golden frames from the reference captures (serial scrubbed), plus the fake `Transport` (foreign frames, stale same-register frames, busy, timeout, disconnect — F17).
 - `runtime`: fake drivers (scripted discovery and failures) and a temp-dir store and log.
 - `lifecycle`: the Spec §4.4 table for both policies, version ordering, and rollback order with fake `Step`s that fail at each position. Runs on Linux CI too.
+- `win`: file-replacement step (fresh, update, failure rollback) in temp folders. Run with `--features simulate`: the real manifest makes the test binary require elevation.
 - **Simulated source** (cargo feature `simulate`, never in release builds): a `Driver` that replays a scenario file. The UI and every alarm path can be exercised with **no device traffic at all**. It is also a second implementation of the source API, which proves the abstraction.
 - Acceptance T1–T10 run manually.
 

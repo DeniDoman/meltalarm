@@ -114,6 +114,10 @@ impl Tray {
     }
 
     /// Explorer restarted: our icons are gone; forget them so the next sync re-adds.
+    pub fn has_icons(&self) -> bool {
+        !self.shown.is_empty()
+    }
+
     pub fn forget_all(&mut self) {
         for (_, s) in self.shown.drain() {
             // SAFETY: we created these icons.

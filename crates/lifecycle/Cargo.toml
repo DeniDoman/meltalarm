@@ -1,0 +1,9 @@
+[package]
+name = "meltalarm-lifecycle"
+description = "MeltAlarm program lifecycle, OS-free: launch decision, versions, all-or-nothing install steps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true

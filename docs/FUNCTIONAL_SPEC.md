@@ -446,7 +446,7 @@ The alarm fires when the `C1` status is non-zero on **any** connector, tracked o
 2026-09-27 20:00:00 | CONFIG        | Safeguard+ ON · OCP 12.0 A · Diff 5.5 A · trig 20/20 s · cut 180 s   (at start and on change)
 2026-09-27 20:00:00 | CONFIG        | WARNING: Safeguard+ is OFF on the PSU
 2026-10-02 18:00:00 | INSTALL       | MeltAlarm 0.2.0 installed · starts with Windows                (§4.5)
-2026-10-05 18:00:00 | STOPPED       | Monitoring stopped: updating to 0.3.0                           (by the running instance, §4.6)
+2026-10-05 18:00:00 | STOPPED       | Monitoring stopped: updating to 0.3.0                           (written by the updater, §4.6)
 2026-10-05 18:00:02 | INSTALL       | updated 0.2.0 → 0.3.0                                            (or: replaced 0.3.0 with 0.2.0)
 2026-10-09 18:00:00 | STOPPED       | Monitoring stopped: uninstalled                                 (only if the log is kept, §4.7)
 ```

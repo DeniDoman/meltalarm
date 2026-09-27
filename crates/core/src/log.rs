@@ -18,6 +18,9 @@ pub enum LogEvent {
     MonitoringStopped { reason: String },
     NotConnected { reason: String },
     Connected { model: String, after: Duration },
+    Installed { version: String, autostart: bool },
+    /// `downgrade`: an older file replaced a newer one (rollback, Spec §4.6).
+    Updated { from: String, to: String, downgrade: bool },
 }
 
 pub fn secs(d: Duration) -> String {
@@ -44,6 +47,12 @@ impl LogEvent {
             LogEvent::MonitoringStopped { reason } => ("STOPPED", format!("Monitoring stopped: {reason}")),
             LogEvent::NotConnected { reason } => ("NOT CONNECTED", format!("{reason} — still trying")),
             LogEvent::Connected { model, after } => ("CONNECTED", format!("{model} after {}", secs(*after))),
+            LogEvent::Installed { version, autostart } => (
+                "INSTALL",
+                format!("MeltAlarm {version} installed · {}", if *autostart { "starts with Windows" } else { "manual start" }),
+            ),
+            LogEvent::Updated { from, to, downgrade: false } => ("INSTALL", format!("updated {from} → {to}")),
+            LogEvent::Updated { from, to, downgrade: true } => ("INSTALL", format!("replaced {from} with {to}")),
         };
         format!("{wall} | {tag:<13} | {body}")
     }
@@ -57,5 +66,16 @@ mod tests {
     fn line_format_matches_spec() {
         let e = LogEvent::PsuClear { conn: "12V-2x6 #1".into(), lasted: Duration::from_secs(42) };
         assert_eq!(e.format("2026-09-27 18:06:22"), "2026-09-27 18:06:22 | PSU CLEAR     | 12V-2x6 #1 | 42 s");
+    }
+
+    #[test]
+    fn install_lines_match_spec() {
+        let wall = "2026-10-05 18:00:02";
+        let e = LogEvent::Installed { version: "0.2.0".into(), autostart: true };
+        assert_eq!(e.format(wall), "2026-10-05 18:00:02 | INSTALL       | MeltAlarm 0.2.0 installed · starts with Windows");
+        let e = LogEvent::Updated { from: "0.2.0".into(), to: "0.3.0".into(), downgrade: false };
+        assert_eq!(e.format(wall), "2026-10-05 18:00:02 | INSTALL       | updated 0.2.0 → 0.3.0");
+        let e = LogEvent::Updated { from: "0.3.0".into(), to: "0.2.0".into(), downgrade: true };
+        assert_eq!(e.format(wall), "2026-10-05 18:00:02 | INSTALL       | replaced 0.3.0 with 0.2.0");
     }
 }

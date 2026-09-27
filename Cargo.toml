@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.88"
@@ -14,6 +14,7 @@ meltalarm-core = { path = "crates/core" }
 meltalarm-source-api = { path = "crates/source-api" }
 meltalarm-source-msi = { path = "crates/source-msi" }
 meltalarm-runtime = { path = "crates/runtime" }
+meltalarm-lifecycle = { path = "crates/lifecycle" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

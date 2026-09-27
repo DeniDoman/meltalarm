@@ -1,9 +1,12 @@
 //! "Run at Windows startup": a Task Scheduler task that starts MeltAlarm elevated at logon
-//! without a UAC prompt (docs/FUNCTIONAL_SPEC.md §4). v0 drives schtasks.exe with an XML
-//! definition; the architecture's COM `ITaskService` variant can replace it later.
+//! without a UAC prompt (docs/FUNCTIONAL_SPEC.md §4.1). It only ever targets the installed
+//! copy (Spec L2); callers pass that path. Driven through schtasks.exe with an XML definition.
 
 use std::os::windows::process::CommandExt;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use meltalarm_lifecycle::Autostart;
 
 const TASK: &str = "MeltAlarm";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -16,23 +19,40 @@ fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-/// Is a task present that starts *this* executable?
-pub fn is_enabled() -> bool {
-    let Ok(exe) = std::env::current_exe() else { return false };
-    let Some(out) = schtasks(&["/Query", "/TN", TASK, "/XML", "ONE"]) else { return false };
-    out.status.success() && {
-        let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
-        text.contains(&xml_escape(&exe.to_string_lossy()).to_lowercase())
+fn xml_unescape(s: &str) -> String {
+    s.replace("&quot;", "\"").replace("&gt;", ">").replace("&lt;", "<").replace("&amp;", "&")
+}
+
+pub struct TaskScheduler;
+
+impl Autostart for TaskScheduler {
+    fn target(&self) -> Option<PathBuf> {
+        let out = schtasks(&["/Query", "/TN", TASK, "/XML", "ONE"])?;
+        if !out.status.success() {
+            return None;
+        }
+        // schtasks prints the XML in the console code page; the path is ASCII in practice.
+        let text = String::from_utf8_lossy(&out.stdout);
+        let start = text.find("<Command>")? + "<Command>".len();
+        let end = start + text[start..].find("</Command>")?;
+        Some(PathBuf::from(xml_unescape(text[start..end].trim().trim_matches('"'))))
+    }
+
+    fn set(&self, target: Option<&Path>) -> Result<(), String> {
+        match target {
+            None => delete(),
+            Some(exe) => create(exe),
+        }
     }
 }
 
-pub fn set(enable: bool) -> Result<(), String> {
-    if !enable {
-        let out = schtasks(&["/Delete", "/TN", TASK, "/F"]).ok_or("schtasks.exe failed to start")?;
-        // Deleting a task that does not exist is fine.
-        return if out.status.success() || !task_exists() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).into()) };
-    }
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+fn delete() -> Result<(), String> {
+    let out = schtasks(&["/Delete", "/TN", TASK, "/F"]).ok_or("schtasks.exe failed to start")?;
+    // Deleting a task that does not exist is fine.
+    if out.status.success() || !task_exists() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_owned()) }
+}
+
+fn create(exe: &Path) -> Result<(), String> {
     let user = format!(
         "{}\\{}",
         std::env::var("USERDOMAIN").unwrap_or_default(),

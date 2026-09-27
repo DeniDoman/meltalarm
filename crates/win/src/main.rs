@@ -10,6 +10,7 @@ mod audio;
 mod autostart;
 mod gfx;
 mod glyph;
+mod lifecycle;
 mod overlay;
 mod popup;
 #[cfg(feature = "simulate")]
@@ -22,6 +23,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use meltalarm_core::{Glyph, LogEvent, UserAction, ViewModel};
+use meltalarm_lifecycle::Autostart;
 use meltalarm_runtime::{Host, Lifecycle, LogSink, Paths, Runtime, Update};
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
@@ -57,6 +59,8 @@ const CMD_STARTUP: u32 = 201;
 const CMD_TEST: u32 = 202;
 const CMD_LOG: u32 = 203;
 const CMD_EXIT: u32 = 204;
+const CMD_INSTALL: u32 = 205;
+const CMD_UNINSTALL: u32 = 206;
 
 thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
@@ -86,6 +90,11 @@ struct App {
     taskbar_created: u32,
     popup_on_start: bool,
     notice_shown: Option<u32>,
+    /// Not the installed copy (or a dev build): never touches the startup task (Spec L2).
+    portable: bool,
+    control_msg: u32,
+    /// Just installed: explain how to keep the icon visible (Spec §7.1).
+    welcome: bool,
 }
 
 fn with_app<R>(f: impl FnOnce(&mut App) -> R) -> Option<R> {
@@ -130,6 +139,13 @@ impl App {
             self.tray.notify(&n.title, &n.text);
             self.notice_shown = Some(n.id);
         }
+        if self.welcome && self.tray.has_icons() {
+            self.welcome = false;
+            self.tray.notify(
+                "MeltAlarm is installed and running",
+                "To keep its icon visible: Settings → Personalization → Taskbar → Other system tray icons → MeltAlarm.",
+            );
+        }
         if self.popup_on_start && !view.connectors.is_empty() {
             self.popup_on_start = false;
             self.popup.toggle(0, None, &self.gfx, &view, self.light);
@@ -153,11 +169,13 @@ impl App {
             self.hotkey = want_hotkey;
         }
 
-        if cfg!(not(feature = "simulate")) && !view.connectors.is_empty() {
+        if !self.portable {
             let want = view.settings.run_at_startup;
             if self.autostart_applied != Some(want) {
-                let actual = autostart::is_enabled();
-                let result = if actual == want { Ok(()) } else { autostart::set(want) };
+                let exe = lifecycle::installed_exe();
+                let task = autostart::TaskScheduler;
+                let actual = task.target().is_some_and(|t| lifecycle::same_file(&t, &exe));
+                let result = if actual == want { Ok(()) } else { task.set(want.then_some(exe.as_path())) };
                 let applied = if result.is_ok() { want } else { actual };
                 self.autostart_applied = Some(applied);
                 if let Err(e) = result {
@@ -224,12 +242,37 @@ impl App {
                 self.reconcile();
                 (None, None)
             }
+            m if m == self.control_msg => match wp.0 {
+                lifecycle::SHOW => {
+                    self.show();
+                    (Some(LRESULT(1)), None)
+                }
+                lifecycle::ALARM => {
+                    let alarm = self.view.alarm.as_ref().is_some_and(|a| !a.test);
+                    (Some(LRESULT(if alarm { lifecycle::IN_ALARM } else { lifecycle::NO_ALARM })), None)
+                }
+                lifecycle::QUIT => (Some(LRESULT(1)), Some(Deferred::Quit(None))),
+                _ => (Some(LRESULT(0)), None),
+            },
             m if m == self.taskbar_created => {
                 self.tray.forget_all();
                 self.reconcile();
                 (handled, None)
             }
             _ => (None, None),
+        }
+    }
+
+    /// A second launch (Spec L6): open the popup of the first tracked connector.
+    fn show(&mut self) {
+        let view = self.view.clone();
+        match view.connectors.iter().position(|c| c.tracked) {
+            Some(i) if self.popup.connector != Some(i) => {
+                let rect = self.tray.icon_rect(tray::uid(i));
+                self.popup.toggle(i, rect, &self.gfx, &view, self.light);
+            }
+            Some(_) => {}
+            None => self.tray.notify("MeltAlarm is already running", view.connecting.as_deref().unwrap_or("MeltAlarm")),
         }
     }
 
@@ -243,6 +286,9 @@ impl App {
                 let _ = AppendMenuW(m, flags, id as usize, &HSTRING::from(text));
             };
             let check = |on: bool| if on { MF_CHECKED } else { MF_UNCHECKED };
+            let edition = if cfg!(feature = "simulate") { " (simulated)" } else if self.portable { " (not installed)" } else { "" };
+            add(MF_STRING | MF_GRAYED, 0, &format!("MeltAlarm {}{edition}", env!("CARGO_PKG_VERSION")));
+            let _ = AppendMenuW(m, MF_SEPARATOR, 0, PCWSTR::null());
             for (i, c) in v.connectors.iter().enumerate() {
                 let grey = if c.tracked && tracked <= 1 { MF_GRAYED } else { MF_ENABLED };
                 let text = format!("Track {}  ({})", c.label, if c.present { "in use" } else { "no load" });
@@ -250,12 +296,18 @@ impl App {
             }
             let _ = AppendMenuW(m, MF_SEPARATOR, 0, PCWSTR::null());
             add(MF_STRING | check(v.settings.alarm_enabled), CMD_ALARM, "Alarm (overlay, sound, voice)");
-            let startup_grey = if cfg!(feature = "simulate") { MF_GRAYED } else { MF_ENABLED };
-            add(MF_STRING | check(v.settings.run_at_startup) | startup_grey, CMD_STARTUP, "Run at Windows startup");
+            if !self.portable {
+                add(MF_STRING | check(v.settings.run_at_startup), CMD_STARTUP, "Run at Windows startup");
+            } else if cfg!(not(feature = "simulate")) {
+                add(MF_STRING, CMD_INSTALL, "Install…");
+            }
             let _ = AppendMenuW(m, MF_SEPARATOR, 0, PCWSTR::null());
             add(MF_STRING, CMD_TEST, "Test alarm");
             add(MF_STRING, CMD_LOG, "Open alarm log");
             let _ = AppendMenuW(m, MF_SEPARATOR, 0, PCWSTR::null());
+            if !self.portable {
+                add(MF_STRING, CMD_UNINSTALL, "Uninstall…");
+            }
             add(MF_STRING, CMD_EXIT, "Exit");
             Some(m)
         }
@@ -268,6 +320,12 @@ impl App {
             CMD_ALARM => self.user(UserAction::SetAlarmEnabled(!v.settings.alarm_enabled)),
             CMD_STARTUP => self.user(UserAction::SetRunAtStartup(!v.settings.run_at_startup)),
             CMD_TEST => self.user(UserAction::TestAlarm),
+            CMD_INSTALL | CMD_UNINSTALL => {
+                if let Err(e) = lifecycle::request(cmd == CMD_INSTALL) {
+                    sys::message(APP_NAME, &format!("Could not start the installer: {e}"), true);
+                }
+                None
+            }
             CMD_LOG => {
                 let path = self.runtime.log_path().to_path_buf();
                 if path.exists() {
@@ -423,20 +481,32 @@ fn main() {
     #[cfg(not(feature = "simulate"))]
     let (instance_name, dir_name) = (w!("Local\\MeltAlarm.Instance"), "MeltAlarm");
 
-    // SAFETY: plain Win32 initialization calls.
-    unsafe {
-        let _instance = CreateMutexW(None, true, instance_name);
-        if GetLastError() == ERROR_ALREADY_EXISTS {
-            return; // already running
-        }
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-    }
-    sys::allow_dark_menus();
-
     let paths = Paths {
         config_dir: sys::app_dir("APPDATA").with_file_name(dir_name),
         log_dir: sys::app_dir("LOCALAPPDATA").with_file_name(dir_name),
     };
+    // SAFETY: plain Win32 initialization call.
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+    }
+
+    // Install, update, uninstall, or hand off to a running instance (Spec §4.4).
+    #[cfg(not(feature = "simulate"))]
+    let portable = match lifecycle::launch(&paths) {
+        lifecycle::Start::Monitor { portable } => portable,
+        lifecycle::Start::Exit => return,
+    };
+    #[cfg(feature = "simulate")]
+    let portable = true;
+
+    // SAFETY: plain Win32 call; the handle lives until the process exits.
+    unsafe {
+        let _instance = CreateMutexW(None, true, instance_name);
+        if GetLastError() == ERROR_ALREADY_EXISTS {
+            return; // started at the same moment as another instance
+        }
+    }
+    sys::allow_dark_menus();
     let log_path = paths.log_dir.join("alarms.log");
     std::panic::set_hook(Box::new(move |info| {
         let line = LogEvent::MonitoringStopped { reason: format!("internal error: {info}") }.format(&sys::wall_clock());
@@ -444,13 +514,13 @@ fn main() {
         sys::message(APP_NAME, &format!("MeltAlarm stopped because of an internal error.\n\n{info}"), true);
     }));
 
-    register_class(w!("MeltAlarmMain"), Some(main_proc));
+    register_class(lifecycle::MAIN_CLASS, Some(main_proc));
     register_class(w!("MeltAlarmPopup"), Some(popup_proc));
     register_class(OVERLAY_CLASS, Some(overlay_proc));
 
     // SAFETY: creating our hidden main window and the (hidden) popup window.
     let (hwnd, popup_hwnd, taskbar_created) = unsafe {
-        let hwnd = CreateWindowExW(WINDOW_EX_STYLE(0), w!("MeltAlarmMain"), w!("MeltAlarm"), WS_POPUP, 0, 0, 0, 0, None, None, None, None)
+        let hwnd = CreateWindowExW(WINDOW_EX_STYLE(0), lifecycle::MAIN_CLASS, w!("MeltAlarm"), WS_POPUP, 0, 0, 0, 0, None, None, None, None)
             .expect("main window");
         let popup = CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
@@ -510,6 +580,9 @@ fn main() {
             taskbar_created,
             popup_on_start,
             notice_shown: None,
+            portable,
+            control_msg: lifecycle::control_message(),
+            welcome: std::env::args().any(|a| a == "--installed"),
         })
     });
     if cfg!(feature = "simulate") && std::env::args().any(|a| a == "--test-alarm") {
