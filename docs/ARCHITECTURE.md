@@ -1,6 +1,6 @@
 # MeltAlarm — Software Architecture v2
 
-**Status:** v2 for review · **Date:** 2026-09-27 · **Supersedes:** v1 (same day) · **Inputs:** `FUNCTIONAL_SPEC.md`, `DESIGN.md`
+**Status:** v2.1 · **Date:** 2026-09-28 · **Supersedes:** v2 (2026-09-27) · v2.1: connect handshake, `Discovery::NotReady`, a startup that never gives up on a present device (Spec v2.1, F19) · **Inputs:** `FUNCTIONAL_SPEC.md`, `DESIGN.md`
 
 **What changed from v1:**
 - The alarm logic no longer speaks "MSI". It works on a **vendor-neutral model**, so other devices can be added later.
@@ -122,7 +122,7 @@ pub enum Fault { OverTemperature, FanFailure, OverPower, RailOverCurrent(&'stati
 ```rust
 pub trait Driver: Send + Sync {
     fn name(&self) -> &'static str;                        // "MSI MPG Ai1300TS / Ai1600TS"
-    fn discover(&self, hid: &mut HidContext) -> Discovery; // Found(Box<dyn Source>) | NotPresent | Unsupported(String)
+    fn discover(&self, hid: &mut HidContext) -> Discovery; // Found(Box<dyn Source>) | NotPresent | NotReady(reason) | Unusable(msg)| NotPresent | Unsupported(String)
 }
 pub trait Source: Send {
     fn info(&self) -> &SourceInfo;
@@ -140,12 +140,15 @@ pub trait Source: Send {
   5. Coexistence locks, if the vendor has any, are honored.
   6. Anything unavailable is reported as `None`, never as zero.
   7. The source ships golden-frame tests.
+  8. **`discover` performs the vendor's complete connect sequence**, e.g. MSI's handshake. `Found` means the device has *answered*. A device that is present but not answering is `NotReady(reason)`, never `Found` or `NotPresent`.
 
 ### 4.3 MSI source (`meltalarm-source-msi`)
 
 | MSI (Spec §1, F-numbers) | Model |
 |---|---|
-| PID `AA6F`/`808C` + `0x11` model string | `Driver::discover`; `SourceInfo.model`; id `msi:ai1300ts` / `msi:ai1600ts` |
+| PID `AA6F`/`808C` | Identifies a supported device (what MSI's software uses); `SourceInfo.id` `msi:ai1300ts` / `msi:ai1600ts` |
+| `00 FA 51` handshake (F19) | Sent by `discover` on every connect, exactly as MSI Center's `CONNECT_PSU` does. It must be echoed, with byte 3 ≠ `FE`. |
+| `0x11` model string | `SourceInfo.model`, **display only** (falls back to the PID's name if garbled) |
 | `0x10`, `0x12`, `0x13` | vendor, firmware, serial |
 | `0xE0` words 3–14 | `readings[0..2].wires` |
 | `0xC1` status bytes | `verdicts[..].status` (0→Normal, 1→OverCurrent, 2→Imbalance, 3→CriticalOverCurrent, n→Unknown(n)) |
@@ -155,12 +158,13 @@ pub trait Source: Send {
 | Capabilities | all `true` |
 
 **Internals:**
-- `protocol` module (pure): the `Reg` enum, `read_request()`, frame validation, decoders, LINEAR11.
+- `protocol` module (pure): `enum Request { Handshake, Read(Reg) }`, the closed set of 9 packets; `packet(Request)`, the only byte builder; reply classification per request (echo, length, busy rule); decoders; LINEAR11.
 - `transport` module: the `Transport` trait over `HidDevice` (with a fake for tests), and `transact()` = lock → drain → write → echo-matched read (500 ms) → unlock.
 - `lock` module:
   - `cfg(windows)`: `OpenMutexW(SYNCHRONIZE)`, falling back to `CreateMutexW`; 2 s wait; an abandoned mutex counts as acquired.
   - `cfg(not(windows))`: no-op, since MSI software doesn't exist there.
-- **Poll policy** (source-internal): E0, C1 and E1 every poll; C0 at start and every 60 s.
+- **Connect** (`discover`): open → handshake → identity (`10`–`13`) → `Found`. An open or handshake failure gives `NotReady(reason)`; a missing lock gives `Unusable`.
+- **Poll policy** (source-internal): E0, C1 and E1 every poll; C0 at start and every 60 s. No handshake per tick.
 - **Linux note:** hidapi's hidraw backend works, and the frame parser already tolerates a present or stripped report ID. Non-root access needs a udev rule, which is Linux packaging, not code.
 
 ---
@@ -169,7 +173,7 @@ pub trait Source: Send {
 
 ```rust
 pub enum Event {
-    SourceConnected(SourceInfo), SourceLost, Report(Report),
+    SourceConnected(SourceInfo), SourcePending(String), SourceLost, Report(Report),
     User(UserAction),        // Snooze, TestAlarm, SetTracked(ConnectorKey, bool), SetAlarmEnabled(bool), SetRunAtStartup(bool)
     Suspended, Resumed, Wake, // Wake = a scheduled deadline passed
 }
@@ -207,19 +211,22 @@ pub struct Output { pub log: Vec<LogEvent>, pub settings_changed: Option<Setting
   | §8.5 | snooze and escalation (new code, Critical, another connector) |
   | §8.6 | clear → 5 s cleared phase; never clear during NO DATA |
   | §9 | log events, RED merge 10 s, raw diagnostic every 10 s during an alarm |
+  | Spec §5.1 | `SourcePending(reason)` before the first connection → `Connecting`. After 2 min: `NotConnected` logged once, plus a `notice`. The first `SourceConnected` after that logs `Connected` (and how long it took). |
 
   A real alarm pre-empts a Test. A Test ends on Snooze (no re-show) or after 30 s, and is never logged as a PSU alarm.
 - **ViewModel** is declarative and complete. Frontends only render and reconcile it.
 
   ```rust
   pub struct ViewModel {
-      pub health: Health,                      // Starting | Live | Stale{age} | NoData{since}
+      pub health: Health,                      // Starting | Connecting{since, reason} | Live | Stale{age} | NoData{since}
       pub connectors: Vec<ConnectorView>,      // all connectors: tracked flag, present, wires[6]{amps, level, flagged},
                                                // total, spread (+level), bar_limit, glyph: Normal|Alarm|NoData|NotConnected, attention marker, notes
       pub source: Option<SourceView>,          // model, firmware, protection summary line, fault lines
       pub alarm: Option<AlarmView>,            // phase, band color role, headline, action, sub, detail lines, right block, snooze allowed
       pub audio: Option<AudioScript>,          // Some ⇔ the alarm should be sounding now
       pub settings: Settings,                  // for the menu / settings window
+      pub connecting: Option<String>,          // tooltip for the placeholder icon while no source has connected yet
+      pub notice: Option<Notice>,              // one-shot user notification {id, title, text}; frontends show each id once
   }
   pub struct AudioScript { pub steps: Vec<AudioStep>, pub repeat: bool }   // [Sound×3 with 300 ms gaps, Speak(text)]
   ```
@@ -246,9 +253,13 @@ pub struct Output { pub log: Vec<LogEvent>, pub settings_changed: Option<Setting
   ```
 
 - **Acquisition thread:**
-  1. Discovery: try every driver for up to 15 s. If nothing is found, `DiscoveryFailed` with the supported-device list from the drivers' names.
+  1. **Discovery** (every 2 s until connected):
+     - `Found` → `SourceConnected`
+     - `NotReady(reason)` → `SourcePending(reason)`, retried **forever**
+     - `Unusable(msg)` → `DiscoveryFailed(msg)` (the app exits)
+     - Only if **no supported device was seen at all** for 2 min → `DiscoveryFailed` with the supported-device list from the drivers' names.
   2. Poll every 1000 ms on a drift-free deadline.
-  3. After 3 unhealthy ticks, drop the source and rediscover every 2 s. This is generic for all sources.
+  3. After 3 unhealthy ticks, drop the source and rediscover every 2 s; `discover` repeats the full connect sequence (e.g. the handshake). This is generic for all sources.
   4. Pause and resume on suspend.
   5. `catch_unwind` at the thread boundary → `Fatal`.
 - **Watchdog:** `next_wake` is never later than last report + 5 s, so a stalled thread produces a Stale view (Spec §5.4).
@@ -270,7 +281,8 @@ pub struct Output { pub log: Vec<LogEvent>, pub settings_changed: Option<Setting
 
 | Reconciler | Rule (derived only from the ViewModel) |
 |---|---|
-| Tray | One icon per tracked connector (stable `uID`); glyph from `ConnectorView`; blink timer (500 ms) while any glyph is `Alarm`; tooltip |
+| Tray | One icon per tracked connector (stable `uID`); glyph from `ConnectorView`; blink timer (500 ms) while any glyph is `Alarm`; tooltip. While `connecting` is set and there are no connectors yet: one hollow placeholder icon with that tooltip. |
+| Notice | A tray balloon (`NIF_INFO`) the first time each `notice.id` appears |
 | Popup | If open, re-render |
 | Overlay | Visible on every monitor iff `alarm.is_some()` |
 | Audio | Player running iff `audio.is_some()`; restart if the script changed |
@@ -299,9 +311,11 @@ pub struct Output { pub log: Vec<LogEvent>, pub settings_changed: Option<Setting
 ## 8. Key flows
 
 ```
-Startup:  main → single instance → Runtime::start (settings loaded) → acquisition discovers (≤15 s)
-          ├─ found   → SourceConnected → core picks tracked connectors on first run → tray appears
-          └─ nothing → Lifecycle::DiscoveryFailed → TaskDialog "only MSI MPG Ai1300TS/Ai1600TS…" → exit
+Startup:  main → single instance → Runtime::start (settings loaded) → acquisition discovers every 2 s
+          ├─ found (answered, incl. handshake) → SourceConnected → first run picks tracked connectors → tray icons
+          ├─ present, silent → SourcePending → hollow "connecting…" icon; retried forever; notice + log after 2 min
+          ├─ unusable (lock inaccessible) → Lifecycle::DiscoveryFailed → message → exit
+          └─ no supported device for 2 min → Lifecycle::DiscoveryFailed → message "only MSI MPG Ai1300TS/Ai1600TS…" → exit
 Tick:     acquisition poll → channel + waker → pump → core.handle(Report) → view → reconcile (≈1 ms)
 Alarm:    verdict ≠ Normal → core Active → view.alarm + view.audio → overlay shown, player started,
           hotkey registered; Output.log = [PSU ALARM, RAW] → sink
@@ -315,7 +329,7 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
 
 ## 9. Read-only contract — enforcement (Q1)
 
-1. **Per source**, a closed request enum and a single private packet builder. A unit test enumerates every variant (MSI: `[00, 51, reg, 0…]`, reg ∈ {10, 11, 12, 13, C0, C1, E0, E1}).
+1. **Per source**, a closed request enum and a single private packet builder. A unit test enumerates every variant. For MSI that is exactly 9 packets: `[00, 51, reg, 0…]` with reg ∈ {10, 11, 12, 13, C0, C1, E0, E1}, plus the connect handshake `[00, FA, 51, 0…]`.
 2. **Workspace-wide** `clippy.toml` `disallowed-methods`:
    - `hidapi::HidDevice::write`
    - `send_feature_report`
@@ -394,6 +408,8 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
 | D6 | One elevated process on Windows | Service + user helper | Admin is sufficient (F3); half the moving parts |
 | D7 | Direct2D/DirectWrite in software mode | GPU rendering | No GPU driver in the process; tiny surfaces |
 | D8 | User-facing text built in `core` | Text per frontend | One tested source of wording across OSes and channels (notch, voice, notification) |
+| D9 | MSI handshake sent on **every connect**, never per tick | Only after reads time out ("minimal touch") | Mirrors the vendor's own clients exactly (deterministic, independent of what other software did since boot); a failure-driven path would be a rarely-exercised branch where bugs hide. Repeated handshakes are routine in MSI's ecosystem (MSI Center + Afterburner). |
+| D10 | A present but silent device is retried forever; exit only when no supported device exists | Give up after a timeout | A safety monitor must not quit because the PSU is slow to answer; "unsupported hardware" (exit) and "not answering yet" (wait) are different situations. |
 
 ---
 
@@ -420,6 +436,14 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
 6. `win`: popup (solid).
 7. `win`: overlay + audio/voice + hotkey + Test alarm → **alarm verified via Test alarm** (R2).
 8. `win`: autostart task, power events → install for daily use.
+
+**v0.1 — fix after the first cold boot (2026-09-28, F19):**
+- MSI connect handshake + `Request` enum (9-packet contract test).
+- `Discovery::NotReady`; identification by USB ID, with the model string display-only.
+- Runtime: 2 s discovery loop, retried forever when present; exit only if absent for 2 min; startup failures logged.
+- Core: `Connecting` health, `NOT CONNECTED` / `CONNECTED` log events, one-shot `notice`.
+- Win: placeholder "connecting…" tray icon and a notice balloon; simulated `silent` scenario for T13.
+- Acceptance: T11 (cold boot, no MSI software), T12, T13.
 
 **v1 — GitHub:**
 - settings window

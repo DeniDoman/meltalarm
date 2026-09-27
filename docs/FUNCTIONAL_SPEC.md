@@ -1,6 +1,6 @@
 # MeltAlarm — Functional Specification
 
-**Status:** draft v2 for review · **Date:** 2026-09-27
+**Status:** v2.1 · **Date:** 2026-09-28 · v2.1: the FA 51 connect handshake (F19), device identification by USB ID, startup that never gives up on a present PSU
 
 **Supported hardware:**
 - MSI **MPG Ai1300TS** and **MPG Ai1600TS** PSUs, connected by USB.
@@ -26,7 +26,7 @@ The concrete values below describe that one system. The app treats every one of 
 | F1 | PSU enumerates as HID `VID_0DB0&PID_AA6F`, one interface, usage page `FF00`, product string `"MPG Ai1300TS"`. | `psu-probe open-only` | Discovery by VID/PID, then model check (§5.1) |
 | F2 | A **non-admin** process can open the HID device. | unelevated `open-only` | — |
 | F3 | `Global\MSI_PSU_Mutex` is inaccessible to non-admin (error 5 for every access right). An **elevated admin gets only `SYNCHRONIZE` + `READ_CONTROL`**, and `MUTEX_ALL_ACCESS` is denied, so `CreateMutex` fails even elevated. `OpenMutex(SYNCHRONIZE)` works and is sufficient to wait and release. | probe, unelevated vs elevated | App runs elevated; open with `SYNCHRONIZE`; create only if absent (§5.2) |
-| F4 | All needed registers are readable with opcode `0x51`. The `FA 51` handshake used by the Afterburner plugin is **not needed**. | probe | Handshake omitted, so less is sent to the PSU |
+| F4 | All needed registers are readable with opcode `0x51`, **but only after a host has connected with the `FA 51` handshake** since the PSU powered up. *Corrected 2026-09-28:* the first measurement ("handshake not needed") was taken while MSI Center or HWiNFO had already done it (see F19). | probe; F19 | Handshake on every connect (§5.1) |
 | F5 | Identity registers: `0x10`="MSI", `0x11`=model ("MPG Ai1300TS"), `0x12`=revision, `0x13`=serial (length-prefixed). | probe | Model string is the compatibility check |
 | F6 | `0xC0` holds the Safeguard+ config. Reference unit: `IsEnable=1, OCP_Point=12.0 A, Current_Diff=5.5 A, OCP_TriggerTime=20, Diff_TriggerTime=20, Warning_Time=180`. MSI Center allows the user to change it (OCP 10–14 A, Diff 4–8 A, triggers 5–30 s, warning 30–240 s). | probe; reverse-engineering of MSI Center | **Read at start and every 60 s**; all thresholds are derived from it (§5.3, §6) |
 | F7 | `0xC1` gives a per-connector status byte (0 = Normal). In Normal the RunTime/TotalTime/current fields are all zero, even under 575 W, so they aren't live data. | 300 samples, idle + load | Status is used; other fields are only logged during an alarm |
@@ -41,6 +41,7 @@ The concrete values below describe that one system. The app treats every one of 
 | F16 | **Other PSU readers vary per user.** Seen on the reference system: MSI Center service (running, then stopped), Afterburner PSU plugin (installed, disabled), HWiNFO64 (portable). The mutex existed even with the MSI Center service stopped. | processes, configs | App must work with any combination (§5.2, test T3) |
 | F17 | **With HWiNFO64 running:** our mutex waits reached **258 ms**, versus ≤ 2 ms with MSI Center alone, so HWiNFO evidently uses the same mutex. On 109 of 180 transactions our input queue held *foreign* replies. Draining the queue plus the echo check gave **0 failures and 0 wrong frames**. | 60 s watch with HWiNFO sensors open | Mutex timeout 2 s; drain + echo check are mandatory (§5.2) |
 | F18 | A minimal Rust prototype (tray icon with 6 squares redrawn at 1 Hz, HID handle open) uses **1.5 MB private memory**, 9.4 MB working set (mostly shared system DLLs), and 16 ms CPU per 15 s. | footprint prototype | Footprint budget (§10) |
+| F19 | **Cold boot without MSI software:** the PSU enumerates on USB but does **not answer** `51` reads (every attempt timed out for 2 min). MSI Center's own `CONNECT_PSU` sends `00 FA 51` once per connection, under the mutex, and requires the echo `FA 51` with byte 3 ≠ `FE`. Its per-tick reads (`Get`) send only `51 <reg>`. The Afterburner plugin sends the same handshake on its connect, so this PSU routinely receives it from several clients. What `FA 51` does inside the firmware is not documented. | MeltAlarm log 2026-09-28 00:06; decompiled MSI Center `cPSU.CONNECT_PSU` and `cPSU.Get` | Handshake on every connect, never per tick (§3, §5.1) |
 
 **Not verified, and not provoked on purpose (hardware safety):**
 - PSU behavior during a real alarm
@@ -79,8 +80,10 @@ MeltAlarm logs enough on the first real event to settle these (§9).
 
 ## 3. Read-only contract (hard requirement)
 
-1. The app can build exactly one kind of packet: `00 51 <reg> 00…` (65 bytes). `<reg>` comes from a closed, compile-time set: `0x10 0x11 0x12 0x13 0xC0 0xC1 0xE0 0xE1`.
-2. No code path sends opcode `0x50` (write), register `0xF1` (save), `0xC2` (buzzer), `FA` handshake, or any byte derived from settings, UI, CLI or IPC.
+1. The app can build exactly **nine** packets (65 bytes each), from a closed, compile-time set:
+   - **reads** `00 51 <reg> 00…`, with `<reg>` ∈ `0x10 0x11 0x12 0x13 0xC0 0xC1 0xE0 0xE1`
+   - **the connect handshake** `00 FA 51 00…`, exactly as MSI Center and Afterburner send it (F19). It is sent only when a connection is opened (startup, reconnect), never per tick.
+2. No code path sends opcode `0x50` (write), register `0xF1` (save), `0xC2` (buzzer), or any byte derived from settings, UI, CLI or IPC.
 3. A unit test asserts every constructible packet. A code-review checklist item confirms `HidDevice::write` has a single call site.
 4. The app never modifies MSI Center, Afterburner, HWiNFO or their configs.
 
@@ -99,11 +102,25 @@ MeltAlarm logs enough on the first real event to settle these (§9).
 
 ## 5. Device communication
 
-### 5.1 Startup
-1. Enumerate HID devices with VID `0x0DB0` and PID `0xAA6F` (Ai1300TS) or `0x808C` (Ai1600TS). Because autostart runs at logon, retry for up to **15 s** so USB enumeration can finish.
-2. Read `0x11`. It must start with `MPG Ai1300TS` or `MPG Ai1600TS`.
-3. If the PSU is not found or not supported, show a message box: *"MeltAlarm supports only MSI MPG Ai1300TS / Ai1600TS power supplies connected by USB. No supported PSU was found."* Then **exit**.
-4. Read `0x10`–`0x13` (identity, shown in Settings) and `0xC0` (config).
+### 5.1 Startup and connecting
+
+**Supported hardware is identified by USB ID**: VID `0x0DB0` with PID `0xAA6F` (Ai1300TS) or `0x808C` (Ai1600TS). MSI's own software selects the Safeguard+ protocol by these IDs alone. The model string the PSU reports (`0x11`) is **display-only** and can never make MeltAlarm refuse a device.
+
+**Connecting** (at startup, and on every reconnect, §5.4) — same sequence as MSI Center's `CONNECT_PSU`:
+1. Open the HID device.
+2. Send the handshake `00 FA 51` under the mutex. The reply must echo `FA 51`, with byte 3 ≠ `FE`.
+3. Read `0x10`–`0x13` (identity, for display) and `0xC0` (config), then start the 1 Hz poll (§5.3).
+
+A connection counts as established only after the PSU has answered. Opening the device alone is not enough.
+
+**Startup outcomes:**
+
+| Situation | Behavior |
+|---|---|
+| No device with a supported USB ID for **2 min** after start | Message *"MeltAlarm supports only MSI MPG Ai1300TS / Ai1600TS power supplies connected by USB. No supported PSU was found."*, logged, then **exit**. The 2 min allow for USB enumeration at logon. |
+| Supported device present, **not answering** (handshake or reads fail) | **Never exit.** One hollow tray icon with the tooltip *"MeltAlarm · connecting to the PSU…"*. Retry every 2 s, indefinitely. After 2 min without success: one Windows notification *"MeltAlarm can't reach the PSU (reason). It keeps trying."* and one log line. The first success is logged too (§9). |
+| Present but unusable (MeltAlarm not elevated, so the lock is inaccessible) | Message with the reason, logged, then exit. |
+| Connected | Tray icons per tracked connector (§7.1). |
 
 ### 5.2 Mutex and coexistence
 The app must work with **any combination** of MSI Center (running, stopped, or not installed), the Afterburner PSU plugin (on or off) and HWiNFO64 (running or not).
@@ -112,7 +129,7 @@ The app must work with **any combination** of MSI Center (running, stopped, or n
   1. acquire the mutex (wait at most **2 s**; on timeout, skip this read)
   2. **drain** stale input reports (other clients' replies arrive in our queue too, F17)
   3. write the request
-  4. read until the reply echoes `51 <reg>` (deadline 500 ms)
+  4. read until the reply echoes the request (`51 <reg>` or `FA 51`; deadline 500 ms)
   5. release the mutex
 - A mutex returned as abandoned counts as acquired.
 - Our hold time is about 1 ms per transaction. The mutex is never held across the sleep.
@@ -136,8 +153,8 @@ Total: about 3 ms of bus time per second.
   - icons go grey
   - the popup says *"Monitoring interrupted"*
   - the event is logged
-  - the app closes and reopens the device every 2 s until a tick succeeds (logged as *DATA BACK*)
-- USB unplug while running goes through the same NO DATA path. The app keeps running; it exits only at startup (§5.1).
+  - the app closes the device and **reconnects** (§5.1, including the handshake) every 2 s until a tick succeeds (logged as *DATA BACK*)
+- USB unplug while running goes through the same NO DATA path. The app keeps running; the only exits are the startup cases of §5.1.
 - Sleep/hibernate: polling pauses on suspend and resumes on resume. That is not logged as lost or restored.
 - If the poll thread stalls for more than 5 s (watchdog), icons go grey.
 
@@ -225,6 +242,7 @@ The app never re-enables it (read-only).
   - neutral (normal, "dark cockpit") / amber / red squares — see DESIGN.md
   - **PSU alarm on this connector**: must look distinct from local red (e.g. blinking)
   - **grey**: NO DATA, or connector not connected
+  - **connecting**: before the first successful connection, a single hollow icon with the tooltip *"MeltAlarm · connecting to the PSU…"* (§5.1)
   - markers for PSU-fault flags and Safeguard+ OFF
 - Tooltip: `MeltAlarm · 12V-2x6 #1 · Normal · max 8.6 A · spread 0.7 A`
 - Left click toggles the status popup for **that icon's connector**.
@@ -334,6 +352,9 @@ The alarm fires when the `C1` status is non-zero on **any** connector, tracked o
 2026-09-27 18:10:00 | PSU FLAG      | OTP (PSU over-temperature) set
 2026-09-27 19:00:00 | NO DATA       | PSU stopped answering
 2026-09-27 19:00:12 | DATA BACK     | after 12 s
+2026-09-28 00:06:32 | NOT CONNECTED | PSU present but not answering (Timeout) — still trying     (once, 2 min after start)
+2026-09-28 00:07:10 | CONNECTED     | MSI MPG Ai1300TS after 2 min 38 s                            (only if NOT CONNECTED was logged)
+2026-09-28 00:02:00 | STOPPED       | Monitoring not started: no supported PSU found                (startup exit, §5.1)
 2026-09-27 20:00:00 | CONFIG        | Safeguard+ ON · OCP 12.0 A · Diff 5.5 A · trig 20/20 s · cut 180 s   (at start and on change)
 2026-09-27 20:00:00 | CONFIG        | WARNING: Safeguard+ is OFF on the PSU
 ```
@@ -379,9 +400,13 @@ The alarm fires when the `C1` status is non-zero on **any** connector, tracked o
 - **T8.** Sleep/resume: no false NO DATA in the log.
 - **T9.** Idle private memory ≤ 5 MB after 24 h, and memory returns to idle after an alarm closes. Log size unchanged when nothing happened.
 - **T10.** Ai1600TS: community test via a GitHub issue template (probe output attached).
+- **T11. Cold boot, no MSI software** (MSI Center service stopped, Afterburner PSU plugin off, HWiNFO closed): after logon MeltAlarm connects without any error, and the log shows no NOT CONNECTED line. This is the scenario that failed on 2026-09-28 (F19).
+- **T12. Cold boot with MSI Center running**: both connect. MSI Center keeps showing sane values while MeltAlarm handshakes and reconnects (the handshake is repeated by design).
+- **T13. Silent PSU** (simulated source that is present but never answers): the hollow "connecting" icon appears, the notification comes once after 2 min, the app never exits, and it connects once the PSU answers.
 
 ---
 
 ## 12. Open items
 - To be learned from the first real event (logged automatically): the RunTime field, E1 behavior for status 2, and the firmware timings.
 - Ai1600TS hardware confirmation (T10).
+- What `FA 51` changes inside the PSU firmware (F19). The working assumption is "host connected, start answering", backed by MSI's own use. It is sent only on connect, never per tick.
