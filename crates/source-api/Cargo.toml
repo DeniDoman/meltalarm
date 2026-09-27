@@ -1,0 +1,18 @@
+[package]
+name = "meltalarm-source-api"
+description = "Driver/Source traits and the shared HID context for MeltAlarm sources"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+meltalarm-model.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+hidapi = { version = "2.6.7", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+hidapi = { version = "2.6.7", default-features = false, features = ["linux-native"] }
+
+[lints]
+workspace = true

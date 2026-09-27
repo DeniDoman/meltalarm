@@ -1,0 +1,17 @@
+[package]
+name = "meltalarm-runtime"
+description = "Portable host for MeltAlarm: acquisition thread, discovery, settings file, alarm log"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+meltalarm-model.workspace = true
+meltalarm-core.workspace = true
+meltalarm-source-api.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+meltalarm-model.workspace = true

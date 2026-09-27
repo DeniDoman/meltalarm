@@ -1,0 +1,8 @@
+# Read-only contract (docs/ARCHITECTURE.md §9): the only way bytes may reach a device is the
+# single, reviewed write call site inside each source crate's transport, marked with one
+# #[allow(clippy::disallowed_methods)]. CI counts those allows.
+disallowed-methods = [
+    { path = "hidapi::HidDevice::write", reason = "device writes only via the source transport's single call site (read-only contract)" },
+    { path = "hidapi::HidDevice::send_feature_report", reason = "feature reports are never sent (read-only contract)" },
+    { path = "hidapi::HidDevice::get_feature_report", reason = "feature reports are never requested (read-only contract)" },
+]

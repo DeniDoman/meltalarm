@@ -1,0 +1,9 @@
+[package]
+name = "meltalarm-model"
+description = "Vendor-neutral vocabulary for per-wire 12V-2x6 current readings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true

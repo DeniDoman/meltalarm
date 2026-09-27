@@ -1,0 +1,12 @@
+[package]
+name = "meltalarm-core"
+description = "MeltAlarm decision logic: levels, alarm state machine, log events, view model (pure)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+meltalarm-model.workspace = true
+
+[lints]
+workspace = true
