@@ -107,6 +107,11 @@ pub struct ConnectorView {
     pub limits_text: Option<String>,
     pub notes: Vec<Note>,
     pub tooltip: String,
+    /// Compact layouts (floating monitor): `OK`, `PSU ALARM` or `No data`.
+    pub short_status: String,
+    /// Compact layouts: one line under the bars, and the level that colors it.
+    pub summary: String,
+    pub summary_level: Level,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -177,6 +182,17 @@ pub(crate) fn status_name(s: DeviceStatus) -> String {
         DeviceStatus::Imbalance => "Current imbalance".into(),
         DeviceStatus::CriticalOverCurrent => "Critical over-current".into(),
         DeviceStatus::Unknown(n) => format!("Unknown PSU alert (0x{n:02X})"),
+    }
+}
+
+/// For one-line summaries: "Imbalance · cut ~2:13".
+fn short_status_name(s: DeviceStatus) -> String {
+    match s {
+        DeviceStatus::Normal => "Normal".into(),
+        DeviceStatus::OverCurrent => "Over-current".into(),
+        DeviceStatus::Imbalance => "Imbalance".into(),
+        DeviceStatus::CriticalOverCurrent => "Critical".into(),
+        DeviceStatus::Unknown(n) => format!("PSU alert 0x{n:02X}"),
     }
 }
 
@@ -266,6 +282,26 @@ impl Core {
             }
         }
 
+        let short_status = match status_kind {
+            StatusKind::Alarm => "PSU ALARM",
+            StatusKind::NoData => "No data",
+            StatusKind::Normal => "OK",
+        }
+        .to_owned();
+        let (summary, summary_level) = if let Some(v) = c.verdict.as_ref().filter(|v| alarm && v.status.is_alarm()) {
+            let name = short_status_name(v.status);
+            (countdown.as_ref().map_or(name.clone(), |cd| format!("{name} · cut {cd}")), Level::Warning)
+        } else if let Health::NoData { since } = health {
+            let age = self.last_healthy.map_or(now.duration_since(since), |t| now.duration_since(t));
+            (format!("Last reading {} ago", crate::log::secs(age)), Level::Normal)
+        } else if matches!(health, Health::Starting | Health::Connecting { .. }) {
+            ("Reading the PSU…".to_owned(), Level::Normal)
+        } else if let (Some(t), Some(s)) = (c.eval.total, c.eval.spread) {
+            (format!("Σ {t:.1}A · Δ {s:.1}A"), c.eval.spread_level)
+        } else {
+            ("—".to_owned(), Level::Normal)
+        };
+
         ConnectorView {
             key: c.key.clone(),
             label: c.label.clone(),
@@ -287,6 +323,9 @@ impl Core {
             limits_text,
             notes,
             tooltip,
+            short_status,
+            summary,
+            summary_level,
         }
     }
 

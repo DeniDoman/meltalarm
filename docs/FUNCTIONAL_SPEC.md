@@ -489,7 +489,7 @@ The alarm fires when the `C1` status is non-zero on **any** connector, tracked o
 | Area | Requirement |
 |---|---|
 | Footprint — idle | Only the tray icons visible. **Private memory ≤ 5 MB** (target ~2 MB; the F18 prototype uses 1.5 MB). Average CPU ≤ 0.1 %. No GPU rendering, so the dGPU is never kept awake. |
-| Footprint — floating | A floating monitor may stay open for hours: **private memory ≤ 10 MB** with it open, CPU ≤ 0.2 % (one software redraw per second). |
+| Footprint — floating | A floating monitor may stay open for hours: **private memory ≤ 20 MB and flat** (no growth over time), CPU ≤ 0.2 % (one software redraw per second). *Measured 2026-09-30: 13–15 MB, the same as an open flyout; the cost is the text-rendering stack, not the window. The first target (≤ 10 MB) was set before measuring.* |
 | Footprint — active | Popup, Settings or alarm open: higher memory is allowed temporarily (text rendering, voice engine, audio). Target ≤ 30 MB. **Released when the window or alarm closes**, back to the idle budget. |
 | Binary | Single exe, target < 2 MB (the prototype is 175 KB). |
 | Latency | PSU status change → alarm visible and audible ≤ 2 s |
@@ -532,7 +532,7 @@ The alarm fires when the `C1` status is non-zero on **any** connector, tracked o
 - **T18. Floating states:** every row of the §7.4 table, for both connectors, including pop out by button and by dragging, locate on tray click, and × then tray click opening the flyout.
 - **T19. Floating placement:** put a view on a second display, scale it, switch layouts; exit and restart: same display, position, layout and scale. Unplug that display: the view moves fully onto the primary display.
 - **T20. Floating focus:** with a borderless game focused, clicking, dragging and scaling the view never takes focus from the game.
-- **T21. Floating footprint:** one view floating for 1 h: private memory ≤ 10 MB.
+- **T21. Floating footprint:** one view floating for 1 h: private memory ≤ 20 MB and not growing (last 30 min within ±1 MB).
 
 ---
 

@@ -12,27 +12,45 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::gfx::{self, Align, Gfx, Painter, num, ui};
 
-const W: f32 = 360.0;
-const PAD: f32 = 20.0;
-const MARGIN: f32 = 16.0; // room for the shadow
+pub(crate) const W: f32 = 360.0;
+pub(crate) const PAD: f32 = 20.0;
+pub(crate) const MARGIN: f32 = 16.0; // room for the shadow
 const BAR_H: f32 = 96.0;
+pub(crate) const TOP: f32 = 18.0;
 
-struct Theme {
-    bg: u32,
-    border: u32,
-    fg: u32,
-    fg3: u32,
-    track: (u32, f32),
-    ok: u32,
-    caution: u32,
-    warn: u32,
-    caution_text: u32,
-    warn_text: u32,
-    note_caution: (u32, f32, u32),
-    note_info: (u32, f32, u32),
+pub(crate) struct Theme {
+    pub bg: u32,
+    pub border: u32,
+    pub fg: u32,
+    pub fg3: u32,
+    pub track: (u32, f32),
+    pub ok: u32,
+    pub caution: u32,
+    pub warn: u32,
+    pub caution_text: u32,
+    pub warn_text: u32,
+    pub note_caution: (u32, f32, u32),
+    pub note_info: (u32, f32, u32),
 }
 
-fn theme(light: bool) -> Theme {
+/// The one button at the right end of the header (DESIGN.md "Popup").
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HeaderButton {
+    None,
+    PopOut,
+    Close,
+}
+
+/// What a click in the flyout hits.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PopupHit {
+    PopOut,
+    /// The header: a drag here tears the view off (Spec §7.4).
+    Header,
+    Other,
+}
+
+pub(crate) fn theme(light: bool) -> Theme {
     if light {
         Theme {
             bg: 0xF9F9F9,
@@ -71,11 +89,27 @@ pub struct Popup {
     pub connector: Option<usize>,
     anchor: Option<RECT>,
     hidden_at: Option<(usize, Instant)>,
+    /// Where and at which DPI scale it was last drawn (window origin, px).
+    pub origin: (i32, i32),
+    pub scale: f32,
 }
 
 impl Popup {
     pub fn new(hwnd: HWND) -> Self {
-        Popup { hwnd, connector: None, anchor: None, hidden_at: None }
+        Popup { hwnd, connector: None, anchor: None, hidden_at: None, origin: (0, 0), scale: 1.0 }
+    }
+
+    /// `x`, `y`: client pixels.
+    pub fn hit(&self, x: i32, y: i32) -> PopupHit {
+        let (dx, dy) = (x as f32 / self.scale - MARGIN, y as f32 / self.scale - MARGIN);
+        let (bx, by, bw, bh) = header_button_rect(PAD, TOP, W - 2.0 * PAD);
+        if (bx..bx + bw).contains(&dx) && (by..by + bh).contains(&dy) {
+            PopupHit::PopOut
+        } else if (0.0..W).contains(&dx) && (0.0..TOP + 24.0 + 8.0).contains(&dy) {
+            PopupHit::Header
+        } else {
+            PopupHit::Other
+        }
     }
 
     /// Tray click: open for `index`, or close if it is already open for it.
@@ -158,12 +192,12 @@ impl Popup {
             (anchor.top - ph - gap).clamp(work.top, (work.bottom - ph).max(work.top))
         };
 
+        self.origin = (x, y);
+        self.scale = scale;
         let _ = gfx.present(self.hwnd, x, y, win_w, win_h, scale, |p| {
             let (cx, cy) = (MARGIN, MARGIN);
-            gfx::shadow(p, cx, cy, card_w, card_h, 8.0, 12.0, 0.35);
-            p.fill_rrect(cx, cy, card_w, card_h, 8.0, t.bg, 1.0);
-            p.stroke_rrect(cx + 0.5, cy + 0.5, card_w - 1.0, card_h - 1.0, 8.0, t.border, 1.0, 1.0);
-            draw_content(p, &t, c, cx + PAD, cy + 18.0, card_w - 2.0 * PAD);
+            draw_card(p, &t, cx, cy, card_w, card_h, t.border);
+            draw_content(p, &t, c, cx + PAD, cy + TOP, card_w - 2.0 * PAD, HeaderButton::PopOut);
         });
     }
 }
@@ -172,7 +206,70 @@ fn notes_height(gfx: &Gfx, c: &ConnectorView) -> f32 {
     c.notes.iter().map(|n| gfx.text_height(&n.text, ui(13.0, 400), W - 2.0 * PAD - 24.0) + 18.0 + 10.0).sum()
 }
 
-fn content_height(gfx: &Gfx, c: &ConnectorView) -> f32 {
+/// Card with its shadow and a 1 px border.
+pub(crate) fn draw_card(p: &Painter, t: &Theme, x: f32, y: f32, w: f32, h: f32, border: u32) {
+    gfx::shadow(p, x, y, w, h, 8.0, 12.0, 0.35);
+    p.fill_rrect(x, y, w, h, 8.0, t.bg, 1.0);
+    p.stroke_rrect(x + 0.5, y + 0.5, w - 1.0, h - 1.0, 8.0, border, 1.0, 1.0);
+}
+
+/// The header button's box, relative to the content origin (`x`, `y`) and width `w`.
+pub(crate) fn header_button_rect(x: f32, y: f32, w: f32) -> (f32, f32, f32, f32) {
+    (x + w - 22.0, y - 2.0, 28.0, 28.0)
+}
+
+pub(crate) fn draw_header_button(p: &Painter, t: &Theme, button: HeaderButton, x: f32, y: f32, w: f32) {
+    let (bx, by, bw, bh) = header_button_rect(x, y, w);
+    let (cx, cy) = (bx + bw / 2.0, by + bh / 2.0);
+    match button {
+        HeaderButton::None => {}
+        HeaderButton::PopOut => {
+            p.fill_rrect(bx, by, bw, bh, 6.0, t.track.0, t.track.1 * 0.7);
+            let (ix, iy) = (cx - 8.0, cy - 8.0);
+            p.stroke_rrect(ix + 2.5, iy + 4.5, 9.0, 9.0, 1.5, t.fg, 1.0, 1.3);
+            p.line(ix + 7.5, iy + 2.5, ix + 13.5, iy + 2.5, t.fg, 1.0, 1.3);
+            p.line(ix + 13.5, iy + 2.5, ix + 13.5, iy + 8.5, t.fg, 1.0, 1.3);
+            p.line(ix + 13.5, iy + 2.5, ix + 8.0, iy + 8.0, t.fg, 1.0, 1.3);
+        }
+        HeaderButton::Close => draw_close(p, t, bx, by, bw, bh),
+    }
+}
+
+/// A close button (x) in the box (`x`, `y`, `w`, `h`).
+pub(crate) fn draw_close(p: &Painter, t: &Theme, x: f32, y: f32, w: f32, h: f32) {
+    p.fill_rrect(x, y, w, h, 5.0, t.track.0, t.track.1 * 0.9);
+    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+    p.line(cx - 4.5, cy - 4.5, cx + 4.5, cy + 4.5, t.fg3, 1.0, 1.3);
+    p.line(cx + 4.5, cy - 4.5, cx - 4.5, cy + 4.5, t.fg3, 1.0, 1.3);
+}
+
+/// Name, then the status chip right after it (DESIGN.md "Popup", item 1).
+pub(crate) fn draw_title(p: &Painter, t: &Theme, c: &ConnectorView, x: f32, y: f32, compact: bool) {
+    let (title, size, chip_h, chip_text, chip_font) = if compact {
+        (ui(13.0, 600), 20.0, 18.0, c.short_status.as_str(), ui(11.0, 600))
+    } else {
+        (ui(15.0, 600), 24.0, 24.0, c.status_text.as_str(), ui(12.0, 600))
+    };
+    let lw = p.gfx().text_width(&c.label, title);
+    p.text(&c.label, title, x, y, lw + 2.0, size, t.fg, 1.0, Align::Left);
+    let dot_r = if compact { 3.0 } else { 3.5 };
+    let pad = if compact { 7.0 } else { 10.0 };
+    let chip_w = p.gfx().text_width(chip_text, chip_font) + 2.0 * pad + 2.0 * dot_r + 6.0;
+    let (chip_bg, chip_a, chip_fg, dot) = match c.status_kind {
+        StatusKind::Alarm => (0xC8102E, 1.0, 0xFFFFFF, Some(0xFFFFFF)),
+        StatusKind::NoData => (t.track.0, t.track.1, t.fg3, None),
+        StatusKind::Normal => (t.track.0, t.track.1, t.fg, Some(t.ok)),
+    };
+    let (chip_x, chip_y) = (x + lw + 8.0, y + (size - chip_h) / 2.0);
+    p.fill_rrect(chip_x, chip_y, chip_w, chip_h, chip_h / 2.0, chip_bg, chip_a);
+    if let Some(d) = dot {
+        p.circle(chip_x + pad + dot_r, chip_y + chip_h / 2.0, dot_r, d, 1.0);
+    }
+    let text_x = chip_x + pad + 2.0 * dot_r + 6.0;
+    p.text(chip_text, chip_font, text_x, chip_y, chip_w - (text_x - chip_x), chip_h, chip_fg, 1.0, Align::Left);
+}
+
+pub(crate) fn content_height(gfx: &Gfx, c: &ConnectorView) -> f32 {
     let mut h = 18.0 + 24.0 + 14.0; // top pad, header, gap
     if c.alarm_reason.is_some() {
         h += 36.0 + 14.0;
@@ -182,7 +279,7 @@ fn content_height(gfx: &Gfx, c: &ConnectorView) -> f32 {
     h + 1.0 + 12.0 + 36.0 + 16.0 // divider, stats, bottom pad
 }
 
-fn level_colors(t: &Theme, l: Level) -> (u32, u32) {
+pub(crate) fn level_colors(t: &Theme, l: Level) -> (u32, u32) {
     match l {
         Level::Normal => (t.ok, t.fg),
         Level::Caution => (t.caution, t.caution_text),
@@ -190,22 +287,10 @@ fn level_colors(t: &Theme, l: Level) -> (u32, u32) {
     }
 }
 
-fn draw_content(p: &Painter, t: &Theme, c: &ConnectorView, x: f32, mut y: f32, w: f32) {
-    // Header: connector name + status chip.
-    p.text(&c.label, ui(15.0, 600), x, y, w, 24.0, t.fg, 1.0, Align::Left);
-    let chip_font = ui(12.0, 600);
-    let chip_w = p.gfx().text_width(&c.status_text, chip_font) + 20.0 + 13.0;
-    let (chip_bg, chip_a, chip_fg, dot) = match c.status_kind {
-        StatusKind::Alarm => (0xC8102E, 1.0, 0xFFFFFF, Some(0xFFFFFF)),
-        StatusKind::NoData => (t.track.0, t.track.1, t.fg3, None),
-        StatusKind::Normal => (t.track.0, t.track.1, t.fg, Some(t.ok)),
-    };
-    let chip_x = x + w - chip_w;
-    p.fill_rrect(chip_x, y, chip_w, 24.0, 12.0, chip_bg, chip_a);
-    if let Some(d) = dot {
-        p.circle(chip_x + 13.5, y + 12.0, 3.5, d, 1.0);
-    }
-    p.text(&c.status_text, chip_font, chip_x + 22.0, y, chip_w - 26.0, 24.0, chip_fg, 1.0, Align::Left);
+/// The full content (popup, floating Full), starting at the content origin.
+pub(crate) fn draw_content(p: &Painter, t: &Theme, c: &ConnectorView, x: f32, mut y: f32, w: f32, button: HeaderButton) {
+    draw_title(p, t, c, x, y, false);
+    draw_header_button(p, t, button, x, y, w);
     y += 24.0 + 14.0;
 
     if let Some(reason) = &c.alarm_reason {

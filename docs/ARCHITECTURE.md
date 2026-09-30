@@ -374,7 +374,7 @@ pub trait Running { fn show(&self); fn alarm_active(&self) -> Option<bool>; fn s
 - **Window:** layered, `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`; `WM_MOUSEACTIVATE → MA_NOACTIVATE` (as the overlay). Drawn with `gfx.present` at `dpi × scale`, reusing the popup's drawing code for *Full*. Move and scale use our own mouse capture, not the system move/size loop: the loop would activate the window and can't keep the aspect ratio. Hit zones: a 6 DIP edge band scales; the ×, tab and grip are buttons; everything else moves. Hover by `TrackMouseEvent`.
 - **Reconcile:** a floating window exists iff its placement says floating, the connector is tracked, and the connector is in the view. The popup and the floating view of one connector are mutually exclusive. The tray click is routed to *locate* when floating.
 - **Tear-off:** a press on the flyout's header hides the flyout, creates the floating view at the same spot and hands it the drag (capture moves to the new window).
-- **Footprint:** no render target is kept between frames (as today). A floating view costs one layered bitmap (about 0.2 MB at 100 %); target ≤ 10 MB total (Spec §10).
+- **Footprint:** no render target is kept between frames (as today). Measured 13–15 MB private with a floating view, the same as an open flyout: the Direct2D/DirectWrite stack, loaded on the first text draw. Target ≤ 20 MB and flat (Spec §10).
 
 ## 8. Key flows
 

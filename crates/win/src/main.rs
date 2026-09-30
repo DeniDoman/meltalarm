@@ -8,10 +8,12 @@
 
 mod audio;
 mod autostart;
+mod floating;
 mod gfx;
 mod glyph;
 mod lifecycle;
 mod paint;
+mod placement;
 mod overlay;
 mod popup;
 #[cfg(feature = "simulate")]
@@ -99,6 +101,9 @@ struct App {
     welcome: bool,
     /// What a click on the current notification opens.
     notice_click: Option<&'static str>,
+    floating: floating::Floating,
+    /// Mouse press in the flyout: where, and on what (pop-out button or header).
+    popup_press: Option<(i32, i32, popup::PopupHit)>,
 }
 
 fn with_app<R>(f: impl FnOnce(&mut App) -> R) -> Option<R> {
@@ -154,6 +159,7 @@ impl App {
             self.popup.toggle(0, None, &self.gfx, &view, self.light);
         }
         self.popup.update(&self.gfx, &view, self.light);
+        self.floating.sync(&self.gfx, &view, self.light);
         self.overlay.sync(&self.gfx, view.alarm.as_ref(), OVERLAY_CLASS);
         self.audio.sync(view.audio.as_ref());
 
@@ -216,9 +222,16 @@ impl App {
                 let id = ((lp.0 >> 16) & 0xFFFF) as u32;
                 match event {
                     NIN_SELECT | NIN_KEYSELECT => {
-                        let rect = self.tray.icon_rect(id);
+                        let index = id.saturating_sub(1) as usize;
                         let view = self.view.clone();
-                        self.popup.toggle(id.saturating_sub(1) as usize, rect, &self.gfx, &view, self.light);
+                        match view.connectors.get(index).filter(|c| self.floating.is_floating(&c.key.to_string())) {
+                            // One view per connector: a floating one is located, not doubled (Spec §7.4).
+                            Some(c) => self.floating.locate(&self.gfx, c, self.light),
+                            None => {
+                                let rect = self.tray.icon_rect(id);
+                                self.popup.toggle(index, rect, &self.gfx, &view, self.light);
+                            }
+                        }
                         (handled, None)
                     }
                     NIN_BALLOONUSERCLICK => {
@@ -276,6 +289,9 @@ impl App {
     fn show(&mut self) {
         let view = self.view.clone();
         match view.connectors.iter().position(|c| c.tracked) {
+            Some(i) if self.floating.is_floating(&view.connectors[i].key.to_string()) => {
+                self.floating.locate(&self.gfx, &view.connectors[i], self.light);
+            }
             Some(i) if self.popup.connector != Some(i) => {
                 let rect = self.tray.icon_rect(tray::uid(i));
                 self.popup.toggle(i, rect, &self.gfx, &view, self.light);
@@ -287,6 +303,16 @@ impl App {
                 self.notice_click = None;
             }
         }
+    }
+
+    /// Flyout → floating view (Spec §7.4). `tear_off`: the header is being dragged.
+    fn pop_out(&mut self, tear_off: bool) {
+        let Some(i) = self.popup.connector else { return };
+        let view = self.view.clone();
+        let Some(c) = view.connectors.get(i) else { return };
+        let origin = self.popup.origin;
+        self.popup.hide();
+        self.floating.pop_out(&self.gfx, c, self.light, origin, tear_off);
     }
 
     fn build_menu(&self) -> Option<HMENU> {
@@ -358,6 +384,7 @@ impl App {
     }
 
     fn shutdown(&mut self) {
+        self.floating.close_all();
         self.audio.stop();
         self.overlay.close();
         self.popup.hide();
@@ -420,6 +447,36 @@ extern "system" fn popup_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> L
     if close {
         with_app(|a| a.popup.hide());
     }
+    let (x, y) = ((lp.0 & 0xFFFF) as i16 as i32, ((lp.0 >> 16) & 0xFFFF) as i16 as i32);
+    match msg {
+        WM_LBUTTONDOWN => {
+            with_app(|a| {
+                let hit = a.popup.hit(x, y);
+                a.popup_press = (hit != popup::PopupHit::Other).then_some((x, y, hit));
+            });
+        }
+        WM_MOUSEMOVE => {
+            // Dragging the header tears the view off; a plain click on it does nothing.
+            with_app(|a| {
+                if let Some((px, py, popup::PopupHit::Header)) = a.popup_press
+                    && ((x - px).abs() > 4 || (y - py).abs() > 4)
+                {
+                    a.popup_press = None;
+                    a.pop_out(true);
+                }
+            });
+        }
+        WM_LBUTTONUP => {
+            with_app(|a| {
+                if let Some((_, _, popup::PopupHit::PopOut)) = a.popup_press.take()
+                    && a.popup.hit(x, y) == popup::PopupHit::PopOut
+                {
+                    a.pop_out(false);
+                }
+            });
+        }
+        _ => {}
+    }
     // SAFETY: default processing.
     unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
 }
@@ -478,6 +535,25 @@ extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
     unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
 }
 
+extern "system" fn float_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    // Never take focus from the game (Spec §7.4).
+    if msg == WM_MOUSEACTIVATE {
+        return LRESULT(MA_NOACTIVATE as isize);
+    }
+    let action = with_app(|a| {
+        let view = a.view.clone();
+        (a.hwnd, a.floating.on_message(&a.gfx, &view, a.light, hwnd, msg, wp.0))
+    });
+    if let Some((main, floating::Action::Menu(x, y))) = action {
+        run_deferred(main, Deferred::Menu(x, y));
+    }
+    if msg == WM_SETCURSOR {
+        return LRESULT(1);
+    }
+    // SAFETY: default processing.
+    unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
+}
+
 fn register_class(name: PCWSTR, proc: WNDPROC) {
     // SAFETY: registering a window class with static name and procedure.
     unsafe {
@@ -526,6 +602,7 @@ fn main() {
     }
     sys::allow_dark_menus();
     let log_path = paths.log_dir.join("alarms.log");
+    let places = placement::Placements::load(paths.config_dir.join("window.toml"));
     std::panic::set_hook(Box::new(move |info| {
         let line = LogEvent::MonitoringStopped { reason: format!("internal error: {info}") }.format(&sys::wall_clock());
         LogSink::new(log_path.clone()).write(&line);
@@ -535,6 +612,7 @@ fn main() {
     register_class(lifecycle::MAIN_CLASS, Some(main_proc));
     register_class(w!("MeltAlarmPopup"), Some(popup_proc));
     register_class(OVERLAY_CLASS, Some(overlay_proc));
+    register_class(floating::CLASS, Some(float_proc));
 
     // SAFETY: creating our hidden main window and the (hidden) popup window.
     let (hwnd, popup_hwnd, taskbar_created) = unsafe {
@@ -602,6 +680,8 @@ fn main() {
             control_msg: lifecycle::control_message(),
             welcome: std::env::args().any(|a| a == "--installed"),
             notice_click: None,
+            floating: floating::Floating::new(places),
+            popup_press: None,
         })
     });
     if cfg!(feature = "simulate") && std::env::args().any(|a| a == "--test-alarm") {

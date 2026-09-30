@@ -133,6 +133,22 @@ fn device_alarm_raises_overlay_audio_countdown_and_logs() {
     assert!(h.tags().ends_with(&["RED START".into(), "PSU ALARM".into(), "PSU RAW".into()]));
     h.advance(Duration::from_secs(47));
     assert_eq!(h.view().alarm.unwrap().right_value, "~2:13");
+    let c = &h.view().connectors[0];
+    assert_eq!((c.short_status.as_str(), c.summary.as_str()), ("PSU ALARM", "Imbalance · cut ~2:13"));
+    assert_eq!(c.summary_level, Level::Warning);
+}
+
+#[test]
+fn compact_texts_for_normal_and_no_data() {
+    let mut h = H::new().start();
+    let c = &h.view().connectors[0];
+    assert_eq!((c.short_status.as_str(), c.summary.as_str()), ("OK", "Σ 47.5A · Δ 0.4A"));
+    h.failed_tick();
+    h.failed_tick();
+    h.failed_tick();
+    let c = &h.view().connectors[0];
+    assert_eq!(c.short_status, "No data");
+    assert!(c.summary.starts_with("Last reading ") && c.summary.ends_with(" s ago"), "{}", c.summary);
 }
 
 #[test]
