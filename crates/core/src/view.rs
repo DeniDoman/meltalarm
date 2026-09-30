@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use meltalarm_model::{ConnectorKey, DeviceStatus, WIRES};
 
-use crate::levels::{CAUTION_WIRE_RATIO, Level};
+use crate::levels::Level;
 use crate::settings::Settings;
 use crate::{Conn, Core, Phase, STALE_AFTER};
 
@@ -22,6 +22,8 @@ pub struct ViewModel {
     pub connecting: Option<String>,
     /// One-shot user notification; frontends show each `id` once.
     pub notice: Option<Notice>,
+    /// The caution strip (Spec §8.8), while it should be on screen.
+    pub caution: Option<CautionView>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -29,6 +31,22 @@ pub struct Notice {
     pub id: u32,
     pub title: String,
     pub text: String,
+    /// Plays the notification sound; otherwise silent (DESIGN.md "Notifications").
+    pub warning: bool,
+    /// A click opens this connector's flyout.
+    pub connector: Option<ConnectorKey>,
+}
+
+/// The caution strip: one line, `place · what · action` (Spec §8.8).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CautionView {
+    /// Changes once per chime: a frontend plays the chime when it sees a new value.
+    pub chime: u32,
+    /// `#1`, or none for things that aren't about one connector.
+    pub place: Option<String>,
+    pub what: String,
+    pub action: String,
+    pub test: bool,
 }
 
 impl ViewModel {
@@ -50,15 +68,17 @@ pub enum Health {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Glyph {
     Normal,
-    /// The device raised an alarm on this connector: solid tile, blinking.
+    /// An alarm (either judge) on this connector: solid tile, blinking.
     Alarm,
     NoData,
     NotConnected,
 }
 
+/// The state words, the same on every surface (Spec §7.1): `OK`, `Caution`, `ALARM`, `No data`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StatusKind {
     Normal,
+    Caution,
     Alarm,
     NoData,
 }
@@ -67,6 +87,7 @@ pub enum StatusKind {
 pub struct WireView {
     pub amps: Option<f32>,
     pub level: Level,
+    /// Flagged by the device, or the peak wire of our overload: knocked out in the alarm tile.
     pub flagged: bool,
 }
 
@@ -93,22 +114,27 @@ pub struct ConnectorView {
     pub total: Option<f32>,
     pub spread: Option<f32>,
     pub spread_level: Level,
-    /// Full-scale value of the bars (the device's wire limit) and the caution line.
+    /// Full scale of the bars (the alarm limit) and the dashed line (the rating).
     pub bar_limit: Option<f32>,
     pub caution_line: Option<f32>,
     pub glyph: Glyph,
-    /// Amber marker: Safeguard+ off or a device fault flag set.
+    /// Amber marker: something to read in the flyout (a cable note, a PSU fault, Safeguard+ off).
     pub attention: bool,
     pub status_kind: StatusKind,
+    /// `OK`, `Caution`, `ALARM` or `No data`, for every layout.
     pub status_text: String,
-    /// During a device alarm: reason line and countdown for the popup.
+    /// During an alarm: reason line and (from the device) countdown.
     pub alarm_reason: Option<String>,
     pub countdown: Option<String>,
-    pub limits_text: Option<String>,
+    /// Live lines while true (Spec §7.2).
     pub notes: Vec<Note>,
+    /// The connector's cable note (Spec §8.10), shown with *Dismiss* once the connector is back to
+    /// normal; while a problem is live, the live line says it.
+    pub cable_note: Option<String>,
+    /// The device's own verdict in words: `Normal`, `Current imbalance`, `Safeguard+ off`, or `—`.
+    pub psu_status: String,
+    pub psu_level: Level,
     pub tooltip: String,
-    /// Compact layouts (floating monitor): `OK`, `PSU ALARM` or `No data`.
-    pub short_status: String,
     /// Compact layouts: one line under the bars, and the level that colors it.
     pub summary: String,
     pub summary_level: Level,
@@ -202,19 +228,24 @@ fn conn_number(label: &str) -> String {
 
 impl Core {
     fn conn_view(&self, c: &Conn, now: Instant) -> ConnectorView {
+        let l = self.limits.limits;
         let health = self.health(now);
         let no_data = matches!(health, Health::NoData { .. } | Health::Starting | Health::Connecting { .. });
         let stale = matches!(health, Health::Stale { .. }) || no_data;
         let present = c.last_nonzero.is_some_and(|t| now.duration_since(t) <= crate::PRESENCE_WINDOW);
+        let device = c.device_alarm();
+        let overload = c.guard.overload();
+        let alarm = c.in_alarm();
         let flagged = c.verdict.as_ref().map(|v| v.flagged).unwrap_or_default();
-        let alarm = c.verdict.as_ref().is_some_and(|v| v.status.is_alarm());
         let wires: [WireView; WIRES] = std::array::from_fn(|i| WireView {
             amps: c.wires.and_then(|w| w[i]),
             level: if flagged[i] { Level::Warning } else { c.eval.wires[i] },
-            flagged: flagged[i],
+            flagged: flagged[i] || overload.is_some_and(|o| o.peak.0 == i),
         });
-        let wire_limit = self.protection.as_ref().and_then(|p| p.wire_limit);
-        let attention = !self.faults.is_empty() || self.protection.as_ref().is_some_and(|p| !p.enabled);
+        let safeguard_off = self.protection.as_ref().is_some_and(|p| !p.enabled);
+        let cable_note = self.state.notes.get(&c.key).map(|n| n.text.clone());
+        let attention = !self.faults.is_empty() || safeguard_off || cable_note.is_some();
+        let live = c.eval.worst();
 
         let glyph = if no_data {
             Glyph::NoData
@@ -225,13 +256,22 @@ impl Core {
         } else {
             Glyph::Normal
         };
-        let (status_kind, status_text) = if alarm {
-            (StatusKind::Alarm, "PSU ALARM".to_owned())
+        let status_kind = if alarm {
+            StatusKind::Alarm
         } else if no_data {
-            (StatusKind::NoData, "No data".to_owned())
+            StatusKind::NoData
+        } else if live > Level::Normal {
+            StatusKind::Caution
         } else {
-            (StatusKind::Normal, "PSU · Normal".to_owned())
+            StatusKind::Normal
         };
+        let status_text = match status_kind {
+            StatusKind::Normal => "OK",
+            StatusKind::Caution => "Caution",
+            StatusKind::Alarm => "ALARM",
+            StatusKind::NoData => "No data",
+        }
+        .to_owned();
 
         let mut notes = Vec::new();
         if let Health::NoData { since } = health {
@@ -245,59 +285,108 @@ impl Core {
         } else if matches!(health, Health::Starting | Health::Connecting { .. }) {
             notes.push(Note { kind: NoteKind::Info, text: "Reading the PSU…".into() });
         }
-        if self.protection.as_ref().is_some_and(|p| !p.enabled) {
-            notes.push(Note { kind: NoteKind::Caution, text: "PSU Safeguard+ is OFF — the PSU will not protect the cable.".into() });
+        if safeguard_off {
+            notes.push(Note { kind: NoteKind::Caution, text: "PSU Safeguard+ is OFF: the PSU won't cut power. MeltAlarm still alarms.".into() });
         }
         for f in &self.faults {
             notes.push(Note { kind: NoteKind::Caution, text: format!("PSU fault: {f}") });
         }
-        if !alarm && !no_data && c.eval.is_red() {
-            notes.push(Note { kind: NoteKind::Caution, text: self.red_note(c, now) });
-        }
-
-        let alarm_reason = c.verdict.as_ref().filter(|v| v.status.is_alarm()).map(|v| {
-            let wires: Vec<String> = (0..WIRES).filter(|&i| v.flagged[i]).map(|i| (i + 1).to_string()).collect();
-            if wires.is_empty() { status_name(v.status) } else { format!("{} · wire {}", status_name(v.status), wires.join(", ")) }
-        });
-        let countdown = if alarm { self.countdown(c, now) } else { None };
-        let limits_text = self.protection.as_ref().and_then(|p| match (p.wire_limit, p.spread_limit) {
-            (Some(w), Some(s)) => Some(format!("{} · {}", trim(w), amps(s))),
-            (Some(w), None) => Some(amps(w)),
-            _ => None,
-        });
-
-        // One line: the shell wraps tray tips at about 50 characters. "12V-2x6 #1" → "#1".
-        let short = c.label.rsplit(' ').next().unwrap_or(&c.label);
-        let mut tooltip = format!("MeltAlarm · {short} · ");
-        if no_data {
-            tooltip.push_str("No data");
-        } else if alarm {
-            tooltip.push_str(&format!("PSU ALARM: {}", alarm_reason.clone().unwrap_or_default()));
-        } else if !present {
-            tooltip.push_str("Not connected");
-        } else {
-            tooltip.push_str("OK");
-            if let (Some((_, max)), Some(spread)) = (c.eval.max, c.eval.spread) {
-                tooltip.push_str(&format!(" · max {max:.1}A · Δ {spread:.1}A"));
+        if !alarm && !no_data {
+            if let Some((i, a)) = c.eval.max.filter(|&(_, a)| a >= l.rating) {
+                let text = if a >= l.alarm {
+                    format!("Wire {} at {}, over the {} alarm limit.", i + 1, amps(a), amps(l.alarm))
+                } else {
+                    format!("Wire {} at {}, above the connector's {} rating.", i + 1, amps(a), amps(l.rating))
+                };
+                notes.push(Note { kind: NoteKind::Caution, text });
+            }
+            if c.eval.spread_level > Level::Normal
+                && let (Some((lo_i, lo)), Some((_, hi))) = (c.eval.min, c.eval.max)
+            {
+                notes.push(Note {
+                    kind: NoteKind::Caution,
+                    text: format!("Uneven load: wire {} carries {}, the others up to {}.", lo_i + 1, amps(lo), amps(hi)),
+                });
             }
         }
 
-        let short_status = match status_kind {
-            StatusKind::Alarm => "PSU ALARM",
-            StatusKind::NoData => "No data",
-            StatusKind::Normal => "OK",
+        let alarm_reason = match (device, overload) {
+            (Some(s), _) => {
+                let w: Vec<String> = (0..WIRES).filter(|&i| flagged[i]).map(|i| (i + 1).to_string()).collect();
+                Some(if w.is_empty() { format!("PSU: {}", status_name(s)) } else { format!("PSU: {} · wire {}", status_name(s), w.join(", ")) })
+            }
+            (None, Some(o)) => {
+                let now_a = c.wires.and_then(|w| w[o.peak.0]).unwrap_or(o.peak.1);
+                Some(format!("Wire {} overload · {}", o.peak.0 + 1, amps(now_a)))
+            }
+            (None, None) => None,
+        };
+        let countdown = if device.is_some() { self.countdown(c, now) } else { None };
+        let psu_status = match (&self.source, c.verdict.as_ref()) {
+            (Some(s), _) if !s.caps.device_verdict => "—".to_owned(),
+            (_, Some(v)) if v.status.is_alarm() => status_name(v.status),
+            _ if safeguard_off => "Safeguard+ off".to_owned(),
+            (_, Some(_)) => "Normal".to_owned(),
+            (_, None) => "—".to_owned(),
+        };
+        let psu_level = if device.is_some() {
+            Level::Warning
+        } else if safeguard_off {
+            Level::Caution
+        } else {
+            Level::Normal
+        };
+
+        // One line: the shell wraps tray tips at about 50 characters. "12V-2x6 #1" → "#1".
+        let short = c.short();
+        let mut tooltip = format!("MeltAlarm · {short} · ");
+        let numbers = |t: &mut String| {
+            if let (Some((_, max)), Some(spread)) = (c.eval.max, c.eval.spread) {
+                t.push_str(&format!(" · max {max:.1}A · Δ {spread:.1}A"));
+            }
+        };
+        if no_data {
+            tooltip.push_str("No data");
+        } else if alarm {
+            let reason = match (device, overload) {
+                (Some(s), _) => short_status_name(s),
+                (None, Some(o)) => format!("wire {} overload", o.peak.0 + 1),
+                _ => String::new(),
+            };
+            tooltip.push_str(&format!("ALARM: {reason}"));
+        } else if !present {
+            tooltip.push_str("Not connected");
+        } else if live > Level::Normal {
+            tooltip.push_str("Caution");
+            numbers(&mut tooltip);
+        } else if cable_note.is_some() {
+            tooltip.push_str("OK · check the cable");
+        } else {
+            tooltip.push_str("OK");
+            numbers(&mut tooltip);
         }
-        .to_owned();
-        let (summary, summary_level) = if let Some(v) = c.verdict.as_ref().filter(|v| alarm && v.status.is_alarm()) {
-            let name = short_status_name(v.status);
-            (countdown.as_ref().map_or(name.clone(), |cd| format!("{name} · cut {cd}")), Level::Warning)
+
+        // Compact summary: the most important thing (Spec §7.4).
+        let (summary, summary_level) = if let Some(s) = device {
+            let name = short_status_name(s);
+            let cd = self.countdown(c, now);
+            (cd.map_or(name.clone(), |cd| format!("{name} · cut {cd}")), Level::Warning)
+        } else if let Some(o) = overload {
+            let now_a = c.wires.and_then(|w| w[o.peak.0]).unwrap_or(o.peak.1);
+            (format!("Wire {} · {} · stop", o.peak.0 + 1, amps(now_a)), Level::Warning)
         } else if let Health::NoData { since } = health {
             let age = self.last_healthy.map_or(now.duration_since(since), |t| now.duration_since(t));
             (format!("Last reading {} ago", crate::log::secs(age)), Level::Normal)
         } else if matches!(health, Health::Starting | Health::Connecting { .. }) {
             ("Reading the PSU…".to_owned(), Level::Normal)
+        } else if let Some((i, a)) = c.eval.max.filter(|&(_, a)| a >= l.rating) {
+            (format!("Wire {} · {} · over rating", i + 1, amps(a)), Level::Caution)
+        } else if c.eval.spread_level > Level::Normal {
+            (format!("Uneven · Δ {:.1}A", c.eval.spread.unwrap_or(0.0)), Level::Caution)
+        } else if cable_note.is_some() {
+            ("Check the cable".to_owned(), Level::Caution)
         } else if let (Some(t), Some(s)) = (c.eval.total, c.eval.spread) {
-            (format!("Σ {t:.1}A · Δ {s:.1}A"), c.eval.spread_level)
+            (format!("Σ {t:.1}A · Δ {s:.1}A"), Level::Normal)
         } else {
             ("—".to_owned(), Level::Normal)
         };
@@ -312,55 +401,27 @@ impl Core {
             total: c.eval.total,
             spread: c.eval.spread,
             spread_level: c.eval.spread_level,
-            bar_limit: wire_limit,
-            caution_line: wire_limit.map(|l| l * CAUTION_WIRE_RATIO),
+            bar_limit: Some(l.alarm),
+            caution_line: Some(l.rating),
             glyph,
             attention,
             status_kind,
             status_text,
             alarm_reason,
             countdown,
-            limits_text,
             notes,
+            cable_note: cable_note.filter(|_| matches!(status_kind, StatusKind::Normal | StatusKind::NoData)),
+            psu_status,
+            psu_level,
             tooltip,
-            short_status,
             summary,
             summary_level,
         }
     }
 
-    fn red_note(&self, c: &Conn, now: Instant) -> String {
-        let p = self.protection.as_ref();
-        if let Some(r) = &c.red
-            && r.sustained_logged {
-                return format!(
-                    "Over the PSU limit for {} — the PSU has not raised an alarm.",
-                    crate::log::secs(now.duration_since(r.start))
-                );
-            }
-        let trigger = |t: Option<Duration>| t.map(|t| format!(" The PSU raises an alarm if this lasts {}.", crate::log::secs(t))).unwrap_or_default();
-        if c.eval.spread_red {
-            format!(
-                "Spread {} is over the PSU limit of {}.{}",
-                amps(c.eval.spread.unwrap_or(0.0)),
-                amps(p.and_then(|p| p.spread_limit).unwrap_or(0.0)),
-                trigger(p.and_then(|p| p.spread_trigger))
-            )
-        } else {
-            let (i, a) = c.eval.max.unwrap_or((0, 0.0));
-            format!(
-                "Wire {} at {} is over the PSU limit of {}.{}",
-                i + 1,
-                amps(a),
-                amps(p.and_then(|p| p.wire_limit).unwrap_or(0.0)),
-                trigger(p.and_then(|p| p.wire_trigger))
-            )
-        }
-    }
-
     fn countdown(&self, c: &Conn, now: Instant) -> Option<String> {
-        let v = c.verdict.as_ref()?;
-        if v.status == DeviceStatus::CriticalOverCurrent {
+        let status = c.device_alarm()?;
+        if status == DeviceStatus::CriticalOverCurrent {
             return Some("any second".into());
         }
         let cutoff = self.protection.as_ref()?.cutoff_after?;
@@ -370,53 +431,50 @@ impl Core {
     }
 
     fn alarm_view(&self, now: Instant) -> Option<AlarmView> {
-        let active: Vec<&Conn> = self.conns.iter().filter(|c| c.verdict.as_ref().is_some_and(|v| v.status.is_alarm())).collect();
         match &self.phase {
             Phase::Idle | Phase::Snoozed { .. } => None,
+            Phase::Test { strip_until, .. } if now < *strip_until => None,
             Phase::Test { .. } => {
                 let c = self.conns.first()?;
-                let mut v = self.alarm_for(c, DeviceStatus::Imbalance, now, true);
+                let mut v = self.alarm_for(c, now, true);
                 v.what = "Current imbalance · sample data".into();
                 v.numbers = "Wire 3 at 2.1 A, others 9.7–9.9 A. Spread 7.8 A.".into();
                 v.bars = test_bars();
+                v.right_label = "POWER CUT IN".into();
                 v.right_value = "~3:00".into();
                 Some(v)
             }
             Phase::Active => {
-                let worst = active
-                    .iter()
-                    .copied()
-                    .max_by_key(|c| c.verdict.as_ref().map(|v| v.status == DeviceStatus::CriticalOverCurrent))?;
-                let status = worst.verdict.as_ref()?.status;
-                let mut v = self.alarm_for(worst, status, now, false);
-                if active.len() > 1 {
-                    v.connector = active.iter().map(|c| c.label.as_str()).collect::<Vec<_>>().join(" + ");
+                let worst = self.worst_conn()?;
+                let mut v = self.alarm_for(worst, now, false);
+                let in_alarm: Vec<&str> = self.conns.iter().filter(|c| c.in_alarm()).map(|c| c.label.as_str()).collect();
+                if in_alarm.len() > 1 {
+                    v.connector = in_alarm.join(" + ");
                 }
                 Some(v)
             }
-            Phase::Cleared { until, lasted, cause, label } => {
+            Phase::Cleared { until, lasted, reason, label } => {
                 let total = crate::CLEARED_SHOW.as_secs_f32();
                 let left = until.saturating_duration_since(now).as_secs_f32();
+                let conn = self.conns.iter().find(|c| &c.label == label);
                 Some(AlarmView {
                     kind: AlarmKind::Cleared,
                     green: true,
                     test: false,
                     headline: "BACK TO NORMAL".into(),
                     connector: label.clone(),
-                    action: format!("{} RECOVERED", label.to_uppercase()),
-                    sub: format!("{} cleared after {}. The event is in the log.", status_name(*cause), crate::log::secs(*lasted)),
-                    what: "PSU status · Normal".into(),
-                    numbers: self
-                        .conns
-                        .iter()
-                        .find(|c| &c.label == label)
-                        .and_then(|c| c.eval.spread)
-                        .map(|s| format!("Spread {}. Sound stopped.", amps(s)))
-                        .unwrap_or_else(|| "Sound stopped.".into()),
+                    action: "LOAD BACK TO NORMAL".into(),
+                    sub: "Inspect the cable before the next session. The note is in MeltAlarm.".into(),
+                    what: format!("{reason} · cleared after {}", crate::log::secs(*lasted)),
+                    numbers: if reason == "Wire overload" {
+                        format!("Every wire is below the {} rating again. Sound stopped.", amps(self.limits.limits.rating))
+                    } else {
+                        "The PSU reports Normal again. Sound stopped.".into()
+                    },
                     right_label: "ALARM LASTED".into(),
                     right_value: mmss(*lasted),
-                    bars: self.conns.iter().find(|c| &c.label == label).map(|c| self.conn_view(c, now).wires).unwrap_or_default(),
-                    bar_limit: self.protection.as_ref().and_then(|p| p.wire_limit),
+                    bars: conn.map(|c| self.conn_view(c, now).wires).unwrap_or_default(),
+                    bar_limit: Some(self.limits.limits.alarm),
                     note: None,
                     snooze: false,
                     cleared_progress: Some(((total - left) / total).clamp(0.0, 1.0)),
@@ -425,40 +483,52 @@ impl Core {
         }
     }
 
-    fn alarm_for(&self, c: &Conn, status: DeviceStatus, now: Instant, test: bool) -> AlarmView {
+    fn alarm_for(&self, c: &Conn, now: Instant, test: bool) -> AlarmView {
+        let l = self.limits.limits;
         let cv = self.conn_view(c, now);
-        let critical = status == DeviceStatus::CriticalOverCurrent;
+        let status = if test { Some(DeviceStatus::Imbalance) } else { c.device_alarm() };
+        let overload = if test { None } else { c.guard.overload() };
+        let critical = status == Some(DeviceStatus::CriticalOverCurrent);
         let data_lost = !test && matches!(self.health(now), Health::NoData { .. });
         let p = self.protection.as_ref();
-        let numbers = if critical {
-            let (i, a) = c.eval.max.unwrap_or((0, 0.0));
-            format!("Wire {} at {}. Hard PSU limit {}.", i + 1, amps(a), trim(p.and_then(|p| p.hard_wire_limit).unwrap_or(18.0)))
-        } else if status == DeviceStatus::Imbalance {
-            let (lo_i, lo) = c.eval.min.unwrap_or((0, 0.0));
-            let others: Vec<f32> = cv.wires.iter().enumerate().filter(|(i, _)| *i != lo_i).filter_map(|(_, w)| w.amps).collect();
-            let (omin, omax) = others.iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
-            let limit = p.and_then(|p| p.spread_limit).map(|l| format!(", PSU limit {}", amps(l))).unwrap_or_default();
-            if others.is_empty() {
-                "Wire readings unavailable.".into()
+        let ours = overload.map(|o| {
+            let a = c.wires.and_then(|w| w[o.peak.0]).unwrap_or(o.peak.1);
+            (o.peak.0, a)
+        });
+        let our_line = ours.map(|(i, a)| format!("Wire {} at {}, rated {}.", i + 1, amps(a), amps(l.rating)));
+        let psu_numbers = |s: DeviceStatus| -> String {
+            if s == DeviceStatus::CriticalOverCurrent {
+                let (i, a) = c.eval.max.unwrap_or((0, 0.0));
+                format!("Wire {} at {}. Hard PSU limit {}.", i + 1, amps(a), trim(p.and_then(|p| p.hard_wire_limit).unwrap_or(18.0)))
+            } else if s == DeviceStatus::Imbalance {
+                let (lo_i, lo) = c.eval.min.unwrap_or((0, 0.0));
+                let others: Vec<f32> = cv.wires.iter().enumerate().filter(|(i, _)| *i != lo_i).filter_map(|(_, w)| w.amps).collect();
+                let (omin, omax) = others.iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+                let limit = p.and_then(|p| p.spread_limit).map(|l| format!(", PSU limit {}", amps(l))).unwrap_or_default();
+                if others.is_empty() {
+                    "Wire readings unavailable.".into()
+                } else {
+                    format!("Wire {} at {}, others {:.1}–{:.1} A. Spread {}{limit}.", lo_i + 1, amps(lo), omin, omax, amps(c.eval.spread.unwrap_or(0.0)))
+                }
             } else {
-                format!(
-                    "Wire {} at {}, others {:.1}–{:.1} A. Spread {}{limit}.",
-                    lo_i + 1,
-                    amps(lo),
-                    omin,
-                    omax,
-                    amps(c.eval.spread.unwrap_or(0.0))
-                )
+                let (i, a) = c.eval.max.unwrap_or((0, 0.0));
+                let limit = p.and_then(|p| p.wire_limit).map(|l| format!(", PSU limit {}", amps(l))).unwrap_or_default();
+                format!("Wire {} at {}{limit}.", i + 1, amps(a))
             }
-        } else {
-            let (i, a) = c.eval.max.unwrap_or((0, 0.0));
-            let limit = p.and_then(|p| p.wire_limit).map(|l| format!(", PSU limit {}", amps(l))).unwrap_or_default();
-            format!("Wire {} at {}{limit}.", i + 1, amps(a))
+        };
+        let source_word = if data_lost { "last PSU report" } else { "reported by the PSU" };
+        let (what, numbers) = match (status, &our_line) {
+            (Some(s), Some(ours)) => (format!("{} · {source_word}", status_name(s)), format!("{} {ours}", psu_numbers(s))),
+            (Some(s), None) => (format!("{} · {source_word}", status_name(s)), psu_numbers(s)),
+            (None, Some(ours)) => ("Wire overload · measured by MeltAlarm".to_owned(), format!("{ours} The PSU hasn't raised an alarm yet.")),
+            (None, None) => (String::new(), String::new()),
         };
         let (right_label, right_value) = if critical {
             ("POWER CUT".into(), "ANY SECOND".into())
         } else if let Some(cd) = self.countdown(c, now) {
             ("POWER CUT IN".into(), cd)
+        } else if let Some((i, a)) = ours {
+            (format!("WIRE {}", i + 1), amps(a))
         } else {
             ("ALARM FOR".into(), c.alarm_since.map(|s| mmss(now.duration_since(s))).unwrap_or_default())
         };
@@ -478,13 +548,15 @@ impl Core {
             connector: c.label.clone(),
             action: "STOP GPU LOAD NOW".into(),
             sub: if test {
-                "This is a test. Your PSU reports no problem.".into()
+                "This is a test. Your cable reports no problem.".into()
             } else if critical {
                 "A wire is above the hard 18 A limit. Power can be cut at any moment.".into()
-            } else {
+            } else if status.is_some() {
                 "Quit the game or render. If the load stays, the PSU cuts power.".into()
+            } else {
+                "Quit the game or render. A wire carries more than the connector is rated for.".into()
             },
-            what: format!("{} · {}", status_name(status), if data_lost { "last PSU report" } else { "reported by the PSU" }),
+            what,
             numbers,
             right_label,
             right_value,
@@ -496,19 +568,16 @@ impl Core {
         }
     }
 
-    fn audio(&self) -> Option<AudioScript> {
+    fn audio_at(&self, now: Instant) -> Option<AudioScript> {
         let (critical, test) = match self.phase {
-            Phase::Active => (
-                self.conns.iter().any(|c| c.verdict.as_ref().is_some_and(|v| v.status == DeviceStatus::CriticalOverCurrent)),
-                false,
-            ),
-            Phase::Test { .. } => (false, true),
+            Phase::Active => (self.conns.iter().any(|c| c.device_alarm() == Some(DeviceStatus::CriticalOverCurrent)), false),
+            Phase::Test { strip_until, .. } if now >= strip_until => (false, true),
             _ => return None,
         };
         let conns: Vec<String> = if test {
             self.conns.first().map(|c| conn_number(&c.label)).into_iter().collect()
         } else {
-            self.conns.iter().filter(|c| c.verdict.as_ref().is_some_and(|v| v.status.is_alarm())).map(|c| conn_number(&c.label)).collect()
+            self.conns.iter().filter(|c| c.in_alarm()).map(|c| conn_number(&c.label)).collect()
         };
         let which = match conns.len() {
             0 => String::new(),
@@ -530,6 +599,20 @@ impl Core {
             ],
             repeat: true,
         })
+    }
+
+    fn caution_view(&self, now: Instant) -> Option<CautionView> {
+        if let Phase::Test { strip_until, chime, .. } = self.phase {
+            let c = self.conns.first();
+            return (now < strip_until).then(|| CautionView {
+                chime,
+                place: c.map(|c| c.short().to_owned()),
+                what: format!("Wire 3 at 9.9 A, above the {} rating", amps(self.limits.limits.rating)),
+                action: "Ease the GPU load".into(),
+                test: true,
+            });
+        }
+        self.strip.as_ref().filter(|s| now < s.until).map(|s| s.view.clone())
     }
 
     pub(crate) fn health(&self, now: Instant) -> Health {
@@ -560,12 +643,13 @@ impl Core {
             connectors: self.conns.iter().map(|c| self.conn_view(c, now)).collect(),
             source,
             alarm: self.alarm_view(now),
-            audio: self.audio(),
+            audio: self.audio_at(now),
             settings: self.settings.clone(),
             connecting: self.source.is_none().then(|| {
                 if self.pending.is_some() { "MeltAlarm · connecting to the PSU…".into() } else { "MeltAlarm · looking for the PSU…".into() }
             }),
             notice: self.notice.clone(),
+            caution: self.caution_view(now),
         }
     }
 }

@@ -4,9 +4,17 @@ use std::time::Duration;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum LogEvent {
-    RedStart { conn: String, detail: String },
-    RedEnd { conn: String, lasted: Duration, detail: String },
-    RedSustained { conn: String, lasted: Duration },
+    /// The cable limits in effect (Spec §6.1), once at start.
+    Limits { text: String },
+    /// MeltAlarm's overload alarm (Spec §6.3) and its end.
+    Overload { conn: String, detail: String },
+    OverloadEnd { conn: String, lasted: Duration, detail: String },
+    /// A wire-above-rating caution qualified (Spec §6.4), and the episode's end.
+    Caution { conn: String, detail: String },
+    CautionEnd { conn: String, lasted: Duration, detail: String },
+    /// An uneven-load advisory qualified, and the episode's end.
+    Uneven { conn: String, detail: String },
+    UnevenEnd { conn: String, lasted: Duration, detail: String },
     PsuAlarm { conn: String, detail: String },
     PsuRaw { diagnostic: String },
     PsuClear { conn: String, lasted: Duration },
@@ -31,11 +39,13 @@ impl LogEvent {
     /// `wall` is the local timestamp, e.g. `2026-09-27 18:02:11`.
     pub fn format(&self, wall: &str) -> String {
         let (tag, body) = match self {
-            LogEvent::RedStart { conn, detail } => ("RED START", format!("{conn} | {detail}")),
-            LogEvent::RedEnd { conn, lasted, detail } => ("RED END", format!("{conn} | {} | {detail}", secs(*lasted))),
-            LogEvent::RedSustained { conn, lasted } => {
-                ("RED SUSTAINED", format!("{conn} | {} over PSU limit, PSU still Normal", secs(*lasted)))
-            }
+            LogEvent::Limits { text } => ("LIMITS", text.clone()),
+            LogEvent::Overload { conn, detail } => ("OVERLOAD", format!("{conn} | {detail}")),
+            LogEvent::OverloadEnd { conn, lasted, detail } => ("OVERLOAD END", format!("{conn} | {} | {detail}", secs(*lasted))),
+            LogEvent::Caution { conn, detail } => ("CAUTION", format!("{conn} | {detail}")),
+            LogEvent::CautionEnd { conn, lasted, detail } => ("CAUTION END", format!("{conn} | {} | {detail}", secs(*lasted))),
+            LogEvent::Uneven { conn, detail } => ("UNEVEN LOAD", format!("{conn} | {detail}")),
+            LogEvent::UnevenEnd { conn, lasted, detail } => ("UNEVEN END", format!("{conn} | {} | {detail}", secs(*lasted))),
             LogEvent::PsuAlarm { conn, detail } => ("PSU ALARM", format!("{conn} | {detail}")),
             LogEvent::PsuRaw { diagnostic } => ("PSU RAW", diagnostic.clone()),
             LogEvent::PsuClear { conn, lasted } => ("PSU CLEAR", format!("{conn} | {}", secs(*lasted))),

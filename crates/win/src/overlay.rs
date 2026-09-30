@@ -31,7 +31,7 @@ pub struct Overlay {
     pub hotkey_hint: bool,
 }
 
-fn monitors() -> Vec<(RECT, f32)> {
+pub(crate) fn monitors() -> Vec<(RECT, f32)> {
     unsafe extern "system" fn cb(mon: HMONITOR, _: HDC, _: *mut RECT, data: LPARAM) -> BOOL {
         // SAFETY: `data` is the Vec pointer passed below, valid for the enumeration.
         unsafe {

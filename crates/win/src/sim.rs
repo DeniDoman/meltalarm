@@ -1,6 +1,8 @@
 //! Dev-only simulated source (cargo feature `simulate`): scripted readings, no USB at all.
-//! Pick a scenario with `MELTALARM_SIM` = cycle (default) | normal | idle | red | alarm | critical | nodata
-//! | silent (present, never answers: T13) | slow (answers after 10 s).
+//! Pick a scenario with `MELTALARM_SIM` = cycle (default) | normal | idle | caution (a wire above the
+//! rating: T23) | overload (MeltAlarm's own alarm) | uneven (advisory: T25) | red (bad contact, PSU
+//! still Normal) | alarm (the PSU's alarm) | critical | fault | nodata | silent (present, never
+//! answers: T13) | slow (answers after 10 s).
 
 use std::time::{Duration, Instant};
 
@@ -19,6 +21,9 @@ const IDLE: [f32; 6] = [0.125; 6];
 const LOAD: [f32; 6] = [8.1, 7.8, 7.7, 7.8, 8.0, 8.1];
 const BAD: [f32; 6] = [9.9, 9.8, 2.1, 9.7, 9.8, 9.9];
 const CRIT: [f32; 6] = [7.9, 18.6, 7.6, 7.8, 7.7, 7.9];
+const HOT: [f32; 6] = [8.9, 9.1, 9.9, 9.0, 8.8, 9.0];
+const OVER: [f32; 6] = [8.9, 9.1, 12.4, 9.0, 8.8, 9.0];
+const UNEVEN: [f32; 6] = [8.2, 8.0, 4.4, 8.1, 8.3, 8.0];
 
 impl Driver for SimDriver {
     fn name(&self) -> &'static str {
@@ -53,10 +58,13 @@ impl Source for SimSource {
     }
 
     fn poll(&mut self, _: &mut HidContext) -> Report {
-        let t = self.start.elapsed().as_secs() % 70;
+        let t = self.start.elapsed().as_secs() % 150;
         let (wires, status, fail) = match self.scenario.as_str() {
-            "normal" => (LOAD, 0, false),
+            "normal" | "fault" => (LOAD, 0, false),
             "idle" => (IDLE, 0, false),
+            "caution" => (HOT, 0, false),
+            "overload" => (OVER, 0, false),
+            "uneven" => (UNEVEN, 0, false),
             "red" => (BAD, 0, false),
             "alarm" => (BAD, 2, false),
             "critical" => (CRIT, 3, false),
@@ -64,10 +72,14 @@ impl Source for SimSource {
             _ => match t {
                 0..8 => (IDLE, 0, false),
                 8..20 => (LOAD, 0, false),
-                20..30 => (BAD, 0, false),
-                30..55 => (BAD, 2, false),
-                55..60 => (LOAD, 0, false),
-                60..64 => (LOAD, 0, true),
+                20..34 => (HOT, 0, false),     // caution strip at 30
+                34..44 => (OVER, 0, false),    // our alarm at 35
+                44..56 => (LOAD, 0, false),    // cleared
+                56..70 => (UNEVEN, 0, false),  // advisory at 66
+                70..90 => (LOAD, 0, false),
+                90..115 => (BAD, 2, false),    // the PSU's alarm
+                115..125 => (LOAD, 0, false),
+                125..129 => (LOAD, 0, true),   // monitoring lost
                 _ => (LOAD, 0, false),
             },
         };
@@ -94,7 +106,7 @@ impl Source for SimSource {
                 },
                 Verdict { index: 1, status: DeviceStatus::Normal, flagged: [false; 6] },
             ]),
-            faults: Some(vec![]),
+            faults: Some(if self.scenario == "fault" && self.start.elapsed().as_secs() >= 5 { vec![Fault::FanFailure] } else { vec![] }),
             protection: Some(Protection {
                 enabled: true,
                 wire_limit: Some(12.0),

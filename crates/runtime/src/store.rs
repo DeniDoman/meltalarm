@@ -4,7 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use meltalarm_core::Settings;
+use meltalarm_core::{CoreState, Settings};
 
 const LOG_ROTATE_BYTES: u64 = 5 * 1024 * 1024;
 
@@ -23,6 +23,32 @@ impl SettingsStore {
 
     /// Atomic: write a temp file, then rename over the old one.
     pub fn save(&self, s: &Settings) {
+        if let Some(dir) = self.path.parent() {
+            let _ = fs::create_dir_all(dir);
+        }
+        let tmp = self.path.with_extension("toml.tmp");
+        if fs::write(&tmp, s.to_file()).is_ok() {
+            let _ = fs::rename(&tmp, &self.path);
+        }
+    }
+}
+
+/// Cable notes and the open-alarm flag (Spec §8.10), next to the settings.
+pub struct StateStore {
+    path: PathBuf,
+}
+
+impl StateStore {
+    pub fn new(path: PathBuf) -> Self {
+        StateStore { path }
+    }
+
+    pub fn load(&self) -> CoreState {
+        fs::read_to_string(&self.path).map(|t| CoreState::from_file(&t)).unwrap_or_default()
+    }
+
+    /// Atomic, like the settings.
+    pub fn save(&self, s: &CoreState) {
         if let Some(dir) = self.path.parent() {
             let _ = fs::create_dir_all(dir);
         }
@@ -72,6 +98,11 @@ mod tests {
         let s = Settings { alarm_enabled: false, ..Settings::default() };
         store.save(&s);
         assert_eq!(store.load(), s);
+
+        let state = StateStore::new(dir.join("cfg").join("state.toml"));
+        let st = CoreState { alarm_open: meltalarm_model::ConnectorKey::parse("sim:psu:1"), ..Default::default() };
+        state.save(&st);
+        assert_eq!(state.load(), st);
 
         let log = LogSink::new(dir.join("log").join("alarms.log"));
         log.write("one");

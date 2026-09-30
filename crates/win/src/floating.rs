@@ -32,6 +32,8 @@ const PULSE_MS: u32 = 600;
 enum Hit {
     Close,
     Tab,
+    /// The cable note's *Dismiss* link (Full layout).
+    Dismiss,
     /// Edge band: -1 = left/top, +1 = right/bottom, 0 = not this axis.
     Edge(i8, i8),
     Move,
@@ -64,6 +66,8 @@ pub enum Action {
     None,
     /// Show the tray menu at this screen point.
     Menu(i32, i32),
+    /// Dismiss the cable note of this connector (key string).
+    Dismiss(String),
 }
 
 pub struct Floating {
@@ -295,6 +299,12 @@ impl Floating {
         if inside(tab_rect(cw, ch)) {
             return Hit::Tab;
         }
+        if place.layout == Layout::Full
+            && let Some((dx, dy, dw, dh)) = popup::dismiss_rect(gfx, c, cw - 2.0 * PAD)
+            && inside((PAD + dx, TOP + dy, dw, dh))
+        {
+            return Hit::Dismiss;
+        }
         if !(-EDGE..cw + EDGE).contains(&x) || !(-EDGE..ch + EDGE).contains(&y) {
             return Hit::Nothing;
         }
@@ -326,7 +336,7 @@ impl Floating {
         match msg {
             WM_SETCURSOR => {
                 let id = match drag.map_or(hit, |d| d.hit) {
-                    Hit::Close | Hit::Tab => IDC_HAND,
+                    Hit::Close | Hit::Tab | Hit::Dismiss => IDC_HAND,
                     Hit::Edge(sx, sy) if sx * sy > 0 => IDC_SIZENWSE,
                     Hit::Edge(sx, sy) if sx * sy < 0 => IDC_SIZENESW,
                     Hit::Edge(0, _) => IDC_SIZENS,
@@ -399,7 +409,7 @@ impl Floating {
                 }
             }
             WM_LBUTTONDOWN => match hit {
-                Hit::Close | Hit::Tab => {
+                Hit::Close | Hit::Tab | Hit::Dismiss => {
                     if let Some(w) = self.wins.get_mut(&key) {
                         w.pressed = Some(hit);
                     }
@@ -438,6 +448,7 @@ impl Floating {
                                 self.render(gfx, c, light, &key, &p, None);
                             }
                         }
+                        Hit::Dismiss => return Action::Dismiss(key),
                         _ => {}
                     }
                 }

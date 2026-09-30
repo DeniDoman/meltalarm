@@ -18,7 +18,7 @@ use meltalarm_core::{Core, Event, LogEvent, Output, UserAction, ViewModel};
 use meltalarm_source_api::Driver;
 
 pub use meltalarm_core as core;
-pub use store::{LogSink, SettingsStore};
+pub use store::{LogSink, SettingsStore, StateStore};
 
 pub struct Paths {
     pub config_dir: PathBuf,
@@ -64,6 +64,7 @@ pub struct Runtime {
     core: Core,
     log: LogSink,
     store: SettingsStore,
+    state: StateStore,
     wall_clock: fn() -> String,
     rx: Receiver<SourceEvent>,
     cmd: Sender<Command>,
@@ -74,11 +75,14 @@ impl Runtime {
     pub fn start(host: Host) -> Runtime {
         let store = SettingsStore::new(host.paths.config_dir.join("settings.toml"));
         let log = LogSink::new(host.paths.log_dir.join("alarms.log"));
-        let core = Core::new(store.load());
+        let state = StateStore::new(host.paths.config_dir.join("state.toml"));
+        let mut core = Core::new(store.load());
+        core.set_wall_clock(host.wall_clock);
+        core.restore(state.load());
         let (tx, rx) = mpsc::channel();
         let (cmd, cmd_rx) = mpsc::channel();
         let thread = acquisition::spawn(host.drivers, tx, cmd_rx, host.waker);
-        Runtime { core, log, store, wall_clock: host.wall_clock, rx, cmd, thread: Some(thread) }
+        Runtime { core, log, store, state, wall_clock: host.wall_clock, rx, cmd, thread: Some(thread) }
     }
 
     /// Drain pending source events into the core. Call after the waker fired.
@@ -149,6 +153,9 @@ impl Runtime {
         if let Some(s) = &out.settings_changed {
             self.store.save(s);
         }
+        if let Some(s) = &out.state_changed {
+            self.state.save(s);
+        }
         out.next_wake
     }
 }
@@ -166,6 +173,9 @@ fn merge(acc: &mut Output, o: Output) {
     acc.log.extend(o.log);
     if o.settings_changed.is_some() {
         acc.settings_changed = o.settings_changed;
+    }
+    if o.state_changed.is_some() {
+        acc.state_changed = o.state_changed;
     }
     acc.next_wake = o.next_wake;
 }

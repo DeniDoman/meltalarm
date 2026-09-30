@@ -31,6 +31,8 @@ pub(crate) struct Theme {
     pub warn_text: u32,
     pub note_caution: (u32, f32, u32),
     pub note_info: (u32, f32, u32),
+    /// Links (DESIGN.md "State colors": accent).
+    pub accent: u32,
 }
 
 /// The one button at the right end of the header (DESIGN.md "Popup").
@@ -47,6 +49,8 @@ pub enum PopupHit {
     PopOut,
     /// The header: a drag here tears the view off (Spec §7.4).
     Header,
+    /// The cable note's *Dismiss* link (Spec §8.10).
+    Dismiss,
     Other,
 }
 
@@ -65,6 +69,7 @@ pub(crate) fn theme(light: bool) -> Theme {
             warn_text: 0xB81F29,
             note_caution: (0xB86E00, 0.12, 0x6E4200),
             note_info: (0x000000, 0.05, 0x3A3A3A),
+            accent: 0x005FB8,
         }
     } else {
         Theme {
@@ -80,6 +85,7 @@ pub(crate) fn theme(light: bool) -> Theme {
             warn_text: 0xFF6B6D,
             note_caution: (0xF5A623, 0.14, 0xF7C878),
             note_info: (0xFFFFFF, 0.07, 0xD0D0D0),
+            accent: 0x4CC2FF,
         }
     }
 }
@@ -100,11 +106,17 @@ impl Popup {
     }
 
     /// `x`, `y`: client pixels.
-    pub fn hit(&self, x: i32, y: i32) -> PopupHit {
+    pub fn hit(&self, gfx: &Gfx, view: &ViewModel, x: i32, y: i32) -> PopupHit {
         let (dx, dy) = (x as f32 / self.scale - MARGIN, y as f32 / self.scale - MARGIN);
         let (bx, by, bw, bh) = header_button_rect(PAD, TOP, W - 2.0 * PAD);
+        let dismiss = self.connector.and_then(|i| view.connectors.get(i)).and_then(|c| dismiss_rect(gfx, c, W - 2.0 * PAD));
         if (bx..bx + bw).contains(&dx) && (by..by + bh).contains(&dy) {
             PopupHit::PopOut
+        } else if let Some((rx, ry, rw, rh)) = dismiss
+            && (PAD + rx..PAD + rx + rw).contains(&dx)
+            && (TOP + ry..TOP + ry + rh).contains(&dy)
+        {
+            PopupHit::Dismiss
         } else if (0.0..W).contains(&dx) && (0.0..TOP + 24.0 + 8.0).contains(&dy) {
             PopupHit::Header
         } else {
@@ -202,8 +214,33 @@ impl Popup {
     }
 }
 
-fn notes_height(gfx: &Gfx, c: &ConnectorView) -> f32 {
-    c.notes.iter().map(|n| gfx.text_height(&n.text, ui(13.0, 400), W - 2.0 * PAD - 24.0) + 18.0 + 10.0).sum()
+fn notes_height(gfx: &Gfx, c: &ConnectorView, w: f32) -> f32 {
+    c.notes.iter().map(|n| gfx.text_height(&n.text, ui(13.0, 400), w - 24.0) + 18.0 + 10.0).sum()
+}
+
+/// From the content origin down to the first live note.
+fn above_notes(c: &ConnectorView) -> f32 {
+    let mut y = 24.0 + 14.0;
+    if c.alarm_reason.is_some() {
+        y += 36.0 + 14.0;
+    }
+    y + 16.0 + 10.0 + BAR_H + 6.0 + 20.0 + 16.0 + 14.0
+}
+
+const DISMISS: &str = "Dismiss";
+
+/// The cable note block: text, then the *Dismiss* link on its own row.
+fn cable_note_height(gfx: &Gfx, text: &str, w: f32) -> f32 {
+    gfx.text_height(text, ui(13.0, 400), w - 24.0) + 9.0 + 4.0 + 20.0 + 7.0
+}
+
+/// The *Dismiss* hit area relative to the content origin (at least 28 px tall).
+pub(crate) fn dismiss_rect(gfx: &Gfx, c: &ConnectorView, w: f32) -> Option<(f32, f32, f32, f32)> {
+    let text = c.cable_note.as_ref()?;
+    let y = above_notes(c) + notes_height(gfx, c, w);
+    let th = gfx.text_height(text, ui(13.0, 400), w - 24.0);
+    let lw = gfx.text_width(DISMISS, ui(13.0, 600));
+    Some((w - 12.0 - lw - 8.0, y + 9.0 + th, lw + 16.0, 28.0))
 }
 
 /// Card with its shadow and a 1 px border.
@@ -246,7 +283,7 @@ pub(crate) fn draw_close(p: &Painter, t: &Theme, x: f32, y: f32, w: f32, h: f32)
 /// Name, then the status chip right after it (DESIGN.md "Popup", item 1).
 pub(crate) fn draw_title(p: &Painter, t: &Theme, c: &ConnectorView, x: f32, y: f32, compact: bool) {
     let (title, size, chip_h, chip_text, chip_font) = if compact {
-        (ui(13.0, 600), 20.0, 18.0, c.short_status.as_str(), ui(11.0, 600))
+        (ui(13.0, 600), 20.0, 18.0, c.status_text.as_str(), ui(11.0, 600))
     } else {
         (ui(15.0, 600), 24.0, 24.0, c.status_text.as_str(), ui(12.0, 600))
     };
@@ -257,6 +294,7 @@ pub(crate) fn draw_title(p: &Painter, t: &Theme, c: &ConnectorView, x: f32, y: f
     let chip_w = p.gfx().text_width(chip_text, chip_font) + 2.0 * pad + 2.0 * dot_r + 6.0;
     let (chip_bg, chip_a, chip_fg, dot) = match c.status_kind {
         StatusKind::Alarm => (0xC8102E, 1.0, 0xFFFFFF, Some(0xFFFFFF)),
+        StatusKind::Caution => (0xF5A623, 0.18, t.caution_text, Some(t.caution)),
         StatusKind::NoData => (t.track.0, t.track.1, t.fg3, None),
         StatusKind::Normal => (t.track.0, t.track.1, t.fg, Some(t.ok)),
     };
@@ -270,12 +308,11 @@ pub(crate) fn draw_title(p: &Painter, t: &Theme, c: &ConnectorView, x: f32, y: f
 }
 
 pub(crate) fn content_height(gfx: &Gfx, c: &ConnectorView) -> f32 {
-    let mut h = 18.0 + 24.0 + 14.0; // top pad, header, gap
-    if c.alarm_reason.is_some() {
-        h += 36.0 + 14.0;
+    let w = W - 2.0 * PAD;
+    let mut h = TOP + above_notes(c) + notes_height(gfx, c, w);
+    if let Some(text) = &c.cable_note {
+        h += cable_note_height(gfx, text, w) + 10.0;
     }
-    h += 16.0 + 10.0 + BAR_H + 6.0 + 20.0 + 16.0 + 14.0; // label, bars, values, wire numbers
-    h += notes_height(gfx, c);
     h + 1.0 + 12.0 + 36.0 + 16.0 // divider, stats, bottom pad
 }
 
@@ -305,18 +342,19 @@ pub(crate) fn draw_content(p: &Painter, t: &Theme, c: &ConnectorView, x: f32, mu
     p.text("Current per wire, A", ui(12.0, 400), x, y, w, 16.0, t.fg3, 1.0, Align::Left);
     y += 16.0 + 10.0;
 
-    // Bars: full scale = the PSU's wire limit; dashed line at the caution level.
+    // Bars: full scale = the alarm limit; dashed line at the rating (DESIGN.md "Popup").
     let label_w = 30.0;
     let area_w = w - label_w - 6.0;
     let col = area_w / 6.0;
     let stale = if c.stale { 0.45 } else { 1.0 };
+    // The top of the track is the alarm limit (labelled, no line); the rating is dashed, its
+    // label under the line so the two labels never touch.
     if let Some(limit) = c.bar_limit {
-        p.line(x, y, x + area_w, y, t.warn, 0.8, 1.0);
         p.text(&trim(limit), num(10.0, 400), x + area_w + 6.0, y - 7.0, label_w, 14.0, t.warn, 1.0, Align::Left);
         if let Some(cl) = c.caution_line {
             let ly = y + BAR_H * (1.0 - cl / limit);
             p.dashed_hline(x, x + area_w, ly, t.caution, 0.7);
-            p.text(&trim(cl), num(10.0, 400), x + area_w + 6.0, ly - 7.0, label_w, 14.0, t.caution, 1.0, Align::Left);
+            p.text(&trim(cl), num(10.0, 400), x + area_w + 6.0, ly + 1.0, label_w, 14.0, t.caution, 1.0, Align::Left);
         }
     }
     for (i, wv) in c.wires.iter().enumerate() {
@@ -348,12 +386,22 @@ pub(crate) fn draw_content(p: &Painter, t: &Theme, c: &ConnectorView, x: f32, mu
         y += th + 18.0 + 10.0;
     }
 
+    if let Some(text) = &c.cable_note {
+        let (bg, a, fg) = t.note_caution;
+        let bh = cable_note_height(p.gfx(), text, w);
+        let th = p.gfx().text_height(text, ui(13.0, 400), w - 24.0);
+        p.fill_rrect(x, y, w, bh, 6.0, bg, a);
+        p.para(text, ui(13.0, 400), x + 12.0, y + 9.0, w - 24.0, th + 2.0, fg, 1.0);
+        p.text(DISMISS, ui(13.0, 600), x + 12.0, y + 9.0 + th + 4.0, w - 24.0, 20.0, t.accent, 1.0, Align::Right);
+        y += bh + 10.0;
+    }
+
     p.line(x, y + 0.5, x + w, y + 0.5, t.border, 1.0, 1.0);
     y += 1.0 + 12.0;
     let stats: [(&str, String, u32); 3] = [
         ("Total (sum of wires)", c.total.map_or("—".into(), |v| format!("{v:.1} A")), t.fg),
         ("Spread", c.spread.map_or("—".into(), |v| format!("{v:.1} A")), level_colors(t, c.spread_level).1),
-        ("PSU limits", c.limits_text.clone().unwrap_or_else(|| "—".into()), t.fg),
+        ("PSU status", c.psu_status.clone(), level_colors(t, c.psu_level).1),
     ];
     let sw = w / 3.0;
     for (i, (k, v, col)) in stats.iter().enumerate() {

@@ -18,6 +18,7 @@ mod overlay;
 mod popup;
 #[cfg(feature = "simulate")]
 mod sim;
+mod strip;
 mod sys;
 mod tray;
 
@@ -26,6 +27,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use meltalarm_core::{Glyph, LogEvent, UserAction, ViewModel};
+use meltalarm_model::ConnectorKey;
 use meltalarm_lifecycle::Autostart;
 use meltalarm_runtime::{Host, Lifecycle, LogSink, Paths, Runtime, Update};
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, WPARAM};
@@ -70,6 +72,13 @@ thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
 }
 
+/// What a click on the current notification opens.
+enum Click {
+    Open(&'static str),
+    /// That connector's flyout (or its floating view, located).
+    Flyout(ConnectorKey),
+}
+
 /// Work that must run *outside* the App borrow (modal loops re-enter the window procedure).
 enum Deferred {
     Menu(i32, i32),
@@ -84,7 +93,10 @@ struct App {
     tray: tray::Tray,
     popup: popup::Popup,
     overlay: overlay::Overlay,
+    strip: strip::Strips,
     audio: audio::Audio,
+    /// The last caution chime played (`CautionView::chime`).
+    chimed: Option<u32>,
     view: Arc<ViewModel>,
     light: bool,
     blink_on: bool,
@@ -100,7 +112,7 @@ struct App {
     /// Just installed: explain how to keep the icon visible (Spec §7.1).
     welcome: bool,
     /// What a click on the current notification opens.
-    notice_click: Option<&'static str>,
+    notice_click: Option<Click>,
     floating: floating::Floating,
     /// Mouse press in the flyout: where, and on what (pop-out button or header).
     popup_press: Option<(i32, i32, popup::PopupHit)>,
@@ -142,17 +154,20 @@ impl App {
             self.blinking = alarm_glyph;
         }
         self.tray.sync(&view, self.light, self.blink_on);
+        // Notifications need an icon to come from; a notice waits until there is one.
         if let Some(n) = &view.notice
             && self.notice_shown != Some(n.id)
+            && self.tray.has_icons()
         {
-            self.tray.notify(tray::Notice::Warning, &n.title, &n.text);
-            self.notice_click = None;
+            let kind = if n.warning { tray::Notice::Warning } else { tray::Notice::Info };
+            self.tray.notify(kind, &n.title, &n.text);
+            self.notice_click = n.connector.clone().map(Click::Flyout);
             self.notice_shown = Some(n.id);
         }
         if self.welcome && self.tray.has_icons() {
             self.welcome = false;
             self.tray.notify(tray::Notice::Info, "MeltAlarm is running", "Click here to keep its icon visible on the taskbar.");
-            self.notice_click = Some("ms-settings:taskbar");
+            self.notice_click = Some(Click::Open("ms-settings:taskbar"));
         }
         if self.popup_on_start && !view.connectors.is_empty() {
             self.popup_on_start = false;
@@ -161,7 +176,14 @@ impl App {
         self.popup.update(&self.gfx, &view, self.light);
         self.floating.sync(&self.gfx, &view, self.light);
         self.overlay.sync(&self.gfx, view.alarm.as_ref(), OVERLAY_CLASS);
+        self.strip.sync(&self.gfx, view.caution.as_ref());
         self.audio.sync(view.audio.as_ref());
+        if let Some(c) = &view.caution
+            && self.chimed != Some(c.chime)
+        {
+            self.chimed = Some(c.chime);
+            self.audio.chime();
+        }
 
         let want_hotkey = self.overlay.visible() && view.alarm.as_ref().is_some_and(|a| a.snooze);
         if want_hotkey != self.hotkey {
@@ -235,8 +257,10 @@ impl App {
                         (handled, None)
                     }
                     NIN_BALLOONUSERCLICK => {
-                        if let Some(target) = self.notice_click.take() {
-                            sys::open_path(std::path::Path::new(target));
+                        match self.notice_click.take() {
+                            Some(Click::Open(target)) => sys::open_path(std::path::Path::new(target)),
+                            Some(Click::Flyout(key)) => self.open_connector(&key),
+                            None => {}
                         }
                         (handled, None)
                     }
@@ -305,6 +329,18 @@ impl App {
         }
     }
 
+    /// Bring a connector's view up: locate it if floating, otherwise open its flyout.
+    fn open_connector(&mut self, key: &ConnectorKey) {
+        let view = self.view.clone();
+        let Some(i) = view.connectors.iter().position(|c| &c.key == key) else { return };
+        if self.floating.is_floating(&key.to_string()) {
+            self.floating.locate(&self.gfx, &view.connectors[i], self.light);
+        } else if self.popup.connector != Some(i) {
+            let rect = if view.connectors[i].tracked { self.tray.icon_rect(tray::uid(i)) } else { None };
+            self.popup.toggle(i, rect, &self.gfx, &view, self.light);
+        }
+    }
+
     /// Flyout → floating view (Spec §7.4). `tear_off`: the header is being dragged.
     fn pop_out(&mut self, tear_off: bool) {
         let Some(i) = self.popup.connector else { return };
@@ -334,7 +370,7 @@ impl App {
                 add(MF_STRING | check(c.tracked) | grey, CMD_TRACK + i as u32, &text);
             }
             let _ = AppendMenuW(m, MF_SEPARATOR, 0, PCWSTR::null());
-            add(MF_STRING | check(v.settings.alarm_enabled), CMD_ALARM, "Alarm (overlay, sound, voice)");
+            add(MF_STRING | check(v.settings.alarm_enabled), CMD_ALARM, "Alerts (on screen, sound, voice)");
             if !self.portable {
                 add(MF_STRING | check(v.settings.run_at_startup), CMD_STARTUP, "Run at Windows startup");
             } else if cfg!(not(feature = "simulate")) {
@@ -387,6 +423,7 @@ impl App {
         self.floating.close_all();
         self.audio.stop();
         self.overlay.close();
+        self.strip.close();
         self.popup.hide();
         self.tray.remove_all();
     }
@@ -451,7 +488,7 @@ extern "system" fn popup_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> L
     match msg {
         WM_LBUTTONDOWN => {
             with_app(|a| {
-                let hit = a.popup.hit(x, y);
+                let hit = a.popup.hit(&a.gfx, &a.view, x, y);
                 a.popup_press = (hit != popup::PopupHit::Other).then_some((x, y, hit));
             });
         }
@@ -468,10 +505,16 @@ extern "system" fn popup_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> L
         }
         WM_LBUTTONUP => {
             with_app(|a| {
-                if let Some((_, _, popup::PopupHit::PopOut)) = a.popup_press.take()
-                    && a.popup.hit(x, y) == popup::PopupHit::PopOut
-                {
-                    a.pop_out(false);
+                let hit = a.popup.hit(&a.gfx, &a.view, x, y);
+                match a.popup_press.take() {
+                    Some((_, _, popup::PopupHit::PopOut)) if hit == popup::PopupHit::PopOut => a.pop_out(false),
+                    Some((_, _, popup::PopupHit::Dismiss)) if hit == popup::PopupHit::Dismiss => {
+                        if let Some(c) = a.popup.connector.and_then(|i| a.view.connectors.get(i)) {
+                            let key = c.key.clone();
+                            a.user(UserAction::DismissNote(key));
+                        }
+                    }
+                    _ => {}
                 }
             });
         }
@@ -544,11 +587,29 @@ extern "system" fn float_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> L
         let view = a.view.clone();
         (a.hwnd, a.floating.on_message(&a.gfx, &view, a.light, hwnd, msg, wp.0))
     });
-    if let Some((main, floating::Action::Menu(x, y))) = action {
-        run_deferred(main, Deferred::Menu(x, y));
+    match action {
+        Some((main, floating::Action::Menu(x, y))) => run_deferred(main, Deferred::Menu(x, y)),
+        Some((_, floating::Action::Dismiss(key))) => {
+            with_app(|a| {
+                if let Some(c) = a.view.connectors.iter().find(|c| c.key.to_string() == key) {
+                    let key = c.key.clone();
+                    a.user(UserAction::DismissNote(key));
+                }
+            });
+        }
+        _ => {}
     }
     if msg == WM_SETCURSOR {
         return LRESULT(1);
+    }
+    // SAFETY: default processing.
+    unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
+}
+
+extern "system" fn strip_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    // Never take focus; everything else is default (the strip is click-through).
+    if msg == WM_MOUSEACTIVATE {
+        return LRESULT(MA_NOACTIVATE as isize);
     }
     // SAFETY: default processing.
     unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
@@ -613,6 +674,7 @@ fn main() {
     register_class(w!("MeltAlarmPopup"), Some(popup_proc));
     register_class(OVERLAY_CLASS, Some(overlay_proc));
     register_class(floating::CLASS, Some(float_proc));
+    register_class(strip::CLASS, Some(strip_proc));
 
     // SAFETY: creating our hidden main window and the (hidden) popup window.
     let (hwnd, popup_hwnd, taskbar_created) = unsafe {
@@ -666,7 +728,9 @@ fn main() {
             tray: tray::Tray::new(hwnd),
             popup: popup::Popup::new(popup_hwnd),
             overlay: overlay::Overlay::new(),
+            strip: strip::Strips::default(),
             audio: audio::Audio::default(),
+            chimed: None,
             view,
             light: sys::system_light(),
             blink_on: true,

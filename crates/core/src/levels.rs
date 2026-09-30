@@ -1,6 +1,9 @@
-//! Local visual levels (docs/FUNCTIONAL_SPEC.md §6.1): instant, no debounce, never alarms.
+//! Live levels (docs/FUNCTIONAL_SPEC.md §6.2): colors only, instant, no debounce. A level
+//! alone never interrupts the user; the cable guard (§6.3–6.4) decides that.
 
-use meltalarm_model::{Protection, WIRES};
+use meltalarm_model::WIRES;
+
+use crate::limits::{Limits, UNEVEN_MIN_AVG};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Level {
@@ -10,9 +13,6 @@ pub enum Level {
     Warning,
 }
 
-pub const CAUTION_WIRE_RATIO: f32 = 0.8;
-pub const CAUTION_SPREAD_RATIO: f32 = 0.5;
-
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Eval {
     pub wires: [Level; WIRES],
@@ -21,14 +21,14 @@ pub struct Eval {
     pub total: Option<f32>,
     pub max: Option<(usize, f32)>,
     pub min: Option<(usize, f32)>,
-    /// Our reading says a wire or the spread is at/over the device limit.
-    pub wire_red: bool,
-    pub spread_red: bool,
+    /// Mean of the measured wires.
+    pub avg: Option<f32>,
 }
 
 impl Eval {
-    pub fn is_red(&self) -> bool {
-        self.wire_red || self.spread_red
+    /// The highest live level of any wire or the spread.
+    pub fn worst(&self) -> Level {
+        self.wires.iter().copied().chain([self.spread_level]).max().unwrap_or_default()
     }
 }
 
@@ -37,55 +37,52 @@ fn median(sorted: &[f32]) -> f32 {
     if n % 2 == 1 { sorted[n / 2] } else { (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0 }
 }
 
-/// Evaluate one connector's wires against the device's limits. A limit the device does
-/// not report produces no color for that metric (never a guessed threshold).
-pub fn evaluate(wires: &[Option<f32>; WIRES], p: Option<&Protection>) -> Eval {
+/// Evaluate one connector's wires against MeltAlarm's cable limits. `device_imbalance`: the
+/// device reports its own imbalance status for this connector (the spread turns red).
+pub fn evaluate(wires: &[Option<f32>; WIRES], l: &Limits, device_imbalance: bool) -> Eval {
     let present: Vec<(usize, f32)> = wires.iter().enumerate().filter_map(|(i, w)| w.map(|a| (i, a))).collect();
     let mut e = Eval::default();
     if present.is_empty() {
         return e;
     }
-    e.total = Some(present.iter().map(|(_, a)| a).sum());
+    let total: f32 = present.iter().map(|(_, a)| a).sum();
+    e.total = Some(total);
+    e.avg = Some(total / present.len() as f32);
     e.max = present.iter().copied().max_by(|a, b| a.1.total_cmp(&b.1));
     e.min = present.iter().copied().min_by(|a, b| a.1.total_cmp(&b.1));
     if present.len() >= 2 {
         e.spread = Some(e.max.unwrap().1 - e.min.unwrap().1);
     }
-    let wire_limit = p.and_then(|p| p.wire_limit);
-    let spread_limit = p.and_then(|p| p.spread_limit);
 
-    if let Some(limit) = wire_limit {
-        for &(i, a) in &present {
-            e.wires[i] = if a >= limit {
-                Level::Warning
-            } else if a >= CAUTION_WIRE_RATIO * limit {
-                Level::Caution
-            } else {
-                Level::Normal
-            };
-        }
-        e.wire_red = e.wires.contains(&Level::Warning);
+    for &(i, a) in &present {
+        e.wires[i] = if a >= l.alarm {
+            Level::Warning
+        } else if a >= l.rating {
+            Level::Caution
+        } else {
+            Level::Normal
+        };
     }
 
-    if let (Some(limit), Some(spread)) = (spread_limit, e.spread) {
-        let (level, threshold) = if spread >= limit {
-            (Level::Warning, limit)
-        } else if spread >= CAUTION_SPREAD_RATIO * limit {
-            (Level::Caution, CAUTION_SPREAD_RATIO * limit)
+    if let Some(spread) = e.spread {
+        let uneven = spread >= l.uneven && e.avg.is_some_and(|a| a >= UNEVEN_MIN_AVG);
+        e.spread_level = if device_imbalance {
+            Level::Warning
+        } else if uneven {
+            Level::Caution
         } else {
-            (Level::Normal, 0.0)
+            Level::Normal
         };
-        e.spread_level = level;
-        e.spread_red = level == Level::Warning;
-        if level > Level::Normal {
+        if e.spread_level > Level::Normal {
             // Attribute the spread to the outlier(s): |I − median| ≥ T/2. At least one wire
             // always qualifies because the median lies between min and max.
             let mut sorted: Vec<f32> = present.iter().map(|(_, a)| *a).collect();
             sorted.sort_by(f32::total_cmp);
             let med = median(&sorted);
+            let threshold = if uneven { l.uneven / 2.0 } else { spread / 2.0 };
             for &(i, a) in &present {
-                if (a - med).abs() >= threshold / 2.0 {
-                    e.wires[i] = e.wires[i].max(level);
+                if (a - med).abs() >= threshold {
+                    e.wires[i] = e.wires[i].max(e.spread_level);
                 }
             }
         }
@@ -96,67 +93,52 @@ pub fn evaluate(wires: &[Option<f32>; WIRES], p: Option<&Protection>) -> Eval {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
-    pub fn prot(ocp: f32, diff: f32) -> Protection {
-        Protection {
-            enabled: true,
-            wire_limit: Some(ocp),
-            spread_limit: Some(diff),
-            wire_trigger: Some(Duration::from_secs(20)),
-            spread_trigger: Some(Duration::from_secs(20)),
-            cutoff_after: Some(Duration::from_secs(180)),
-            hard_wire_limit: Some(18.0),
-        }
-    }
     fn w(v: [f32; 6]) -> [Option<f32>; 6] {
         v.map(Some)
     }
     use Level::*;
+    const L: Limits = Limits::V1;
 
     #[test]
     fn healthy_full_load_is_all_normal() {
         // Measured on the reference system at ~575 W (F12).
-        let e = evaluate(&w([8.1, 7.8, 7.7, 7.8, 8.0, 8.1]), Some(&prot(12.0, 5.5)));
+        let e = evaluate(&w([8.1, 7.8, 7.7, 7.8, 8.0, 8.56]), &L, false);
         assert_eq!(e.wires, [Normal; 6]);
         assert_eq!(e.spread_level, Normal);
-        assert!(!e.is_red());
+        assert_eq!(e.worst(), Normal);
     }
 
     #[test]
-    fn wire_thresholds_are_inclusive() {
-        let e = evaluate(&w([9.6, 12.0, 9.59, 1.0, 1.0, 1.0]), Some(&prot(12.0, 50.0)));
+    fn wire_levels_follow_the_cable_limits_inclusively() {
+        let e = evaluate(&w([9.5, 10.5, 9.49, 9.0, 9.0, 9.0]), &L, false);
         assert_eq!(&e.wires[..3], &[Caution, Warning, Normal]);
-        assert!(e.wire_red);
     }
 
     #[test]
-    fn bad_contact_lights_the_outlier_red_and_loaded_wires_amber() {
-        let e = evaluate(&w([9.9, 9.8, 2.1, 9.7, 9.8, 9.9]), Some(&prot(12.0, 5.5)));
-        assert_eq!(e.wires, [Caution, Caution, Warning, Caution, Caution, Caution]);
-        assert_eq!(e.spread_level, Warning);
-        assert!(e.spread_red && !e.wire_red);
-    }
-
-    #[test]
-    fn spread_caution_attributes_to_outlier_only() {
-        // spread 3.0 ≥ 2.75 (50 % of 5.5) → caution on the low wire only.
-        let e = evaluate(&w([7.0, 7.0, 4.0, 7.0, 7.0, 7.0]), Some(&prot(12.0, 5.5)));
+    fn uneven_load_attributes_to_the_outlier_only() {
+        // spread 3.0 at 6.5 A average → caution on the low wire only.
+        let e = evaluate(&w([7.0, 7.0, 4.0, 7.0, 7.0, 7.0]), &L, false);
         assert_eq!(e.spread_level, Caution);
         assert_eq!(e.wires, [Normal, Normal, Caution, Normal, Normal, Normal]);
     }
 
     #[test]
-    fn follows_non_default_device_limits() {
-        let e = evaluate(&w([8.5, 8.0, 8.0, 8.0, 8.0, 8.0]), Some(&prot(10.0, 4.0)));
-        assert_eq!(e.wires[0], Caution); // 8.5 ≥ 0.8 × 10
+    fn uneven_needs_load_idle_noise_is_normal() {
+        let e = evaluate(&w([0.1, 0.1, 0.1, 0.1, 0.1, 3.5]), &L, false);
+        assert_eq!(e.spread_level, Normal);
     }
 
     #[test]
-    fn no_limits_no_colors_and_missing_wires_ignored() {
-        let e = evaluate(&w([30.0, 0.0, 0.0, 0.0, 0.0, 0.0]), None);
-        assert_eq!(e.wires, [Normal; 6]);
-        let e = evaluate(&[Some(1.0), None, None, None, None, None], Some(&prot(12.0, 5.5)));
+    fn the_device_imbalance_status_turns_the_spread_and_the_outlier_red() {
+        let e = evaluate(&w([9.9, 9.8, 2.1, 9.7, 9.8, 9.9]), &L, true);
+        assert_eq!(e.spread_level, Warning);
+        assert_eq!(e.wires, [Caution, Caution, Warning, Caution, Caution, Caution]);
+    }
+
+    #[test]
+    fn missing_wires_are_ignored() {
+        let e = evaluate(&[Some(1.0), None, None, None, None, None], &L, false);
         assert_eq!(e.spread, None);
         assert_eq!(e.total, Some(1.0));
     }
