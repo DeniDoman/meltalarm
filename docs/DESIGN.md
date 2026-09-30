@@ -63,11 +63,28 @@ Windows notifications (toasts), sent through the tray icon. Rare: install welcom
 ## Popup (360 px wide, Windows 11 flyout)
 
 From top to bottom:
-1. Header: connector name, plus a chip ("PSU · Normal", solid red "PSU ALARM", or "No data").
+1. Header: connector name, then **directly after it** the status chip ("PSU · Normal", solid red "PSU ALARM", or "No data"). The right edge holds only the window's one button: *pop out* in the tray flyout, × when floating. The same header is used in every layout.
 2. During a PSU alarm: a red strip with the reason and the countdown.
 3. Bars (96 px track) with values and wire numbers.
 4. A note strip for the §6.3 notice or for no data.
 5. Footer stats: total (sum of wires), spread, PSU limits.
+
+## Floating monitor
+
+Mockup (approved 2026-09-30): https://claude.ai/artifact/DAk9umrqm4UfJTGeX9LTMU
+
+A connector's view taken out of the tray to watch it for a long time (Spec §7.4). Two layouts, the same look as the popup.
+
+| | Compact | Full |
+|---|---|---|
+| Size at 100 % | 220 × 152, **fixed** in every state | the popup card (360 wide), grows downward for notes like the popup |
+| Content | name + chip (`OK` / `PSU ALARM` / `No data`), six bars (56 px track, 10 px wide) with values, one summary line | exactly the popup |
+| Summary line | `Σ 47.5A · Δ 0.4A`, colored by the spread level; no data: `Last reading 12 s ago`; PSU alarm: `Imbalance · cut ~2:13` in warning red | — |
+
+- **Calm when fine:** at rest only data is visible. On hover: × (top right), a 36 × 18 tab with a chevron hanging off the bottom edge (⌄ = Full, ⌃ = Compact), a faint resize grip in the bottom-right corner, and the border brightens to `#555555`.
+- **Scaling is uniform:** the layout is drawn at the chosen scale and never distorts. Each layout remembers its own scale.
+- **Locate pulse:** a 2 px accent ring (`#4CC2FF`) with a soft 6 px halo, for 0.6 s.
+- Card, shadow, colors, fonts: as the popup, following the system light or dark theme.
 
 ## Settings (Windows 11 window, cards)
 

@@ -348,6 +348,7 @@ The app never re-enables it (read-only).
   - during a PSU alarm: the countdown (§8.4)
 - Updates live at 1 Hz while open. Closes on focus loss or Esc, like native flyouts.
 - In NO DATA: "Monitoring interrupted", with the age of the last valid reading.
+- A **pop out** button (top right) and dragging the header turn it into the floating monitor (§7.4).
 
 ### 7.3 Settings window
 
@@ -363,6 +364,34 @@ The app never re-enables it (read-only).
 - Settings apply immediately. They are stored in `%APPDATA%\MeltAlarm\settings.toml`.
 
 ---
+
+### 7.4 Floating monitor
+
+**Why:** the popup is for a glance; it closes as soon as another window is clicked. To *watch* a connector during a stress test or a game, the user takes its view out of the tray and places it anywhere, including a small dedicated display. Design: DESIGN.md "Floating monitor".
+
+Each tracked connector has **one view**, in one of three states: *hidden*, *flyout* (the §7.2 popup) or *floating*. There is never a flyout and a floating view of the same connector at once.
+
+| Event | Hidden | Flyout | Floating |
+|---|---|---|---|
+| Tray icon left click | → flyout | → hidden | **locate:** bring to front, move fully onto a visible display if needed, pulse once |
+| Pop-out button in the flyout | — | → floating, at the last floating placement; the first time, in *Full* at the flyout's spot | — |
+| Drag the flyout's header | — | → floating in *Full*, where it is dropped | — |
+| × (floating) | — | — | → hidden; the next tray click opens the flyout |
+| Click on another window | — | → hidden | stays |
+| Right click | tray menu | tray menu | tray menu (on the floating view too) |
+| Connector un-tracked | — | closes | closes, and its placement is forgotten |
+| Exit, restart, reboot | — | — | restored at the next start once the connector reports |
+| No data, not connected, PSU alarm | — | shown in the view | shown in the view; the alarm notch (§8) still appears on top |
+| Display removed, resolution or DPI change | — | — | moved fully onto a visible display (the primary one if its own is gone); scale kept |
+
+**Floating view rules:**
+- Always on top, and **never takes focus**: clicking or dragging it doesn't take keyboard or mouse focus from a game. No taskbar button, not in Alt+Tab.
+- Drag anywhere on it to move. Drag an edge or corner to scale it **uniformly**, from 75 % up to the size of its display. No free aspect ratio, no snapping.
+- Two layouts, switched with the tab on its bottom edge: **Compact** (bars, values and one summary line) and **Full** (the §7.2 content). Compact never changes size with the state.
+- Its controls (×, tab, resize grip) appear only while the mouse is over it.
+- Exclusive-fullscreen games hide it (like the notch, §8.7). Borderless games don't.
+
+**Remembered per connector**, saved at every change: floating or not, the display (by its hardware identity), the position on that display, the layout, and a scale for each layout. The file sits next to the settings (`%APPDATA%\MeltAlarm\window.toml`). Deleting it just resets the placements.
 
 ## 8. Alarm
 
@@ -460,6 +489,7 @@ The alarm fires when the `C1` status is non-zero on **any** connector, tracked o
 | Area | Requirement |
 |---|---|
 | Footprint — idle | Only the tray icons visible. **Private memory ≤ 5 MB** (target ~2 MB; the F18 prototype uses 1.5 MB). Average CPU ≤ 0.1 %. No GPU rendering, so the dGPU is never kept awake. |
+| Footprint — floating | A floating monitor may stay open for hours: **private memory ≤ 10 MB** with it open, CPU ≤ 0.2 % (one software redraw per second). |
 | Footprint — active | Popup, Settings or alarm open: higher memory is allowed temporarily (text rendering, voice engine, audio). Target ≤ 30 MB. **Released when the window or alarm closes**, back to the idle budget. |
 | Binary | Single exe, target < 2 MB (the prototype is 175 KB). |
 | Latency | PSU status change → alarm visible and audible ≤ 2 s |
@@ -499,6 +529,10 @@ The alarm fires when the `C1` status is non-zero on **any** connector, tracked o
 - **T15. Update** while the installed older version is monitoring: one dialog; the gap is logged (STOPPED, INSTALL); settings, log, startup task and pinned icons are kept. Rolling back to the older file works the same way. Refused while a PSU alarm is active (*Test alarm* doesn't count). A failed replace leaves the old version running.
 - **T16. Uninstall** from the tray and from Installed apps: task, shortcut, entry and program folder are gone; settings and log remain unless the box was checked.
 - **T17. Portable:** *Run without installing* and `--portable` monitor normally and create no task, shortcut or entry.
+- **T18. Floating states:** every row of the §7.4 table, for both connectors, including pop out by button and by dragging, locate on tray click, and × then tray click opening the flyout.
+- **T19. Floating placement:** put a view on a second display, scale it, switch layouts; exit and restart: same display, position, layout and scale. Unplug that display: the view moves fully onto the primary display.
+- **T20. Floating focus:** with a borderless game focused, clicking, dragging and scaling the view never takes focus from the game.
+- **T21. Floating footprint:** one view floating for 1 h: private memory ≤ 10 MB.
 
 ---
 

@@ -1,6 +1,6 @@
 # MeltAlarm — Software Architecture v2
 
-**Status:** v2.1 · **Date:** 2026-09-28 · **Supersedes:** v2 (2026-09-27) · v2.2: program lifecycle (install, update, uninstall, autostart) split into a portable crate plus per-OS backends (Spec v2.2 §4, §7.1) · v2.1: connect handshake, `Discovery::NotReady`, a startup that never gives up on a present device (Spec v2.1, F19) · **Inputs:** `FUNCTIONAL_SPEC.md`, `DESIGN.md`
+**Status:** v2.1 · **Date:** 2026-09-28 · **Supersedes:** v2 (2026-09-27) · v2.3: floating monitor (Spec §7.4, §7.2 below) · v2.2: program lifecycle (install, update, uninstall, autostart) split into a portable crate plus per-OS backends (Spec v2.2 §4, §7.1) · v2.1: connect handshake, `Discovery::NotReady`, a startup that never gives up on a present device (Spec v2.1, F19) · **Inputs:** `FUNCTIONAL_SPEC.md`, `DESIGN.md`
 
 **What changed from v1:**
 - The alarm logic no longer speaks "MSI". It works on a **vendor-neutral model**, so other devices can be added later.
@@ -305,6 +305,7 @@ pub struct Output { pub log: Vec<LogEvent>, pub settings_changed: Option<Setting
 | `audio` | Alarm thread: `PlaySoundW` file + SAPI `ISpVoice` executing the `AudioScript` | — |
 | `hotkey`, `autostart` (schtasks XML), `power` | ✓ | `autostart` implements `lifecycle::Autostart`; COM `ITaskService` optional |
 | `lifecycle` | — | Windows backend of §7.1: dialogs, steps, control window, `--uninstall` |
+| `floating` + `placement` | — | Floating monitor windows and their saved placement (§7.2) |
 | `settings` window | — | Win11 window per DESIGN §Settings |
 | Win10 fallback | Solid colors (free, since v0 is solid) | Verified pass |
 
@@ -364,6 +365,16 @@ pub trait Running { fn show(&self); fn alarm_active(&self) -> Option<bool>; fn s
 **Linux backend (next iteration, `Policy::PackageManaged`):** no `Step`s at all: the package installs the binary, the `.desktop` file and the udev rule. `Autostart` = an XDG autostart entry pointing to the packaged binary; `Instances` = a D-Bus name or a socket in `$XDG_RUNTIME_DIR`. `decide` then only ever returns `Monitor { portable: false }` or `HandOff`.
 
 ---
+
+### 7.2 Floating monitor (Spec §7.4)
+
+- **Core supplies the words, the frontend the geometry.** `ConnectorView` gains `short_status` (`OK` / `PSU ALARM` / `No data`), `summary` and `summary_level` for the compact layout (D8). Where a view sits is frontend state (D14).
+- **Placement file** `window.toml` in the config folder, owned by `meltalarm-win` (`placement` module): per `ConnectorKey`: floating, display id, position in DIPs relative to that display's work area, layout, a scale per layout. Written on every change (end of a drag or scale, layout switch, ×), read at start. Unknown or broken lines are ignored.
+- **Display identity:** the monitor's device interface name (`EnumDisplayDevicesW(…, EDD_GET_DEVICE_INTERFACE_NAME)`), stable across reboots, unlike `\\.\DISPLAYn`. Missing → the primary display. Always clamped fully inside a work area.
+- **Window:** layered, `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`; `WM_MOUSEACTIVATE → MA_NOACTIVATE` (as the overlay). Drawn with `gfx.present` at `dpi × scale`, reusing the popup's drawing code for *Full*. Move and scale use our own mouse capture, not the system move/size loop: the loop would activate the window and can't keep the aspect ratio. Hit zones: a 6 DIP edge band scales; the ×, tab and grip are buttons; everything else moves. Hover by `TrackMouseEvent`.
+- **Reconcile:** a floating window exists iff its placement says floating, the connector is tracked, and the connector is in the view. The popup and the floating view of one connector are mutually exclusive. The tray click is routed to *locate* when floating.
+- **Tear-off:** a press on the flyout's header hides the flyout, creates the floating view at the same spot and hands it the drag (capture moves to the new window).
+- **Footprint:** no render target is kept between frames (as today). A floating view costs one layered bitmap (about 0.2 MB at 100 %); target ≤ 10 MB total (Spec §10).
 
 ## 8. Key flows
 
@@ -477,6 +488,7 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
 | D11 | Windows: one self-installing exe | MSI/WiX or Inno Setup installer; portable only | No second toolchain; one file to verify; an installer would still need custom steps for the elevated task; unsigned installers get harsher SmartScreen treatment. Portable-only broke autostart and left no uninstall. |
 | D12 | Lifecycle = portable decisions (`meltalarm-lifecycle`) + per-OS steps; Linux delegates to the package manager | Lifecycle code only inside `meltalarm-win`; self-install on Linux too | Same pattern as sources; the decision table is tested on Linux CI; Linux users expect packages; nothing Windows-specific reaches the portable crates. |
 | D13 | Autostart only ever targets the protected installed copy | Task follows `current_exe()` (v0) | v0 let a user-writable file start elevated at logon (privilege escalation), and let dev builds repoint the user's task. |
+| D14 | Window placement is frontend state in its own file (`window.toml`) | In core `Settings` | Where a window sits is a per-OS, per-display detail; core decides what is shown, not where. Keeps `settings.toml` portable and meaningful on Linux. |
 
 ---
 
@@ -522,6 +534,7 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
 - `psu-probe` tool
 - `docs/PROTOCOL.md`, README
 - CI (Windows + Linux crates), release, coexistence run (T3)
+- floating monitor (§7.2): Spec §7.4, acceptance T18–T21
 - program lifecycle (§7.1): `meltalarm-lifecycle`, Windows backend, VERSIONINFO, control window; acceptance T14–T17. Migrates the reference PC from the hand-copied `%LOCALAPPDATA%\Programs\MeltAlarm`.
 
 **Next iteration:** Linux frontend (§11.1); new sources on demand (§11.2), plus the local-alarm policy decision for sources without a verdict.
