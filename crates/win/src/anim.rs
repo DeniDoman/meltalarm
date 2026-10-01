@@ -62,6 +62,12 @@ impl Transition {
         (now.duration_since(self.start).as_secs_f32() / self.length.as_secs_f32().max(0.001)).clamp(0.0, 1.0)
     }
 
+    /// Start counting now: a transition starts when its first frame is shown, not before the
+    /// (sometimes slow) drawing of that frame, or the drawing eats the transition.
+    pub fn restart(&mut self) {
+        self.start = Instant::now();
+    }
+
     pub fn done(&self, now: Instant) -> bool {
         self.t(now) >= 1.0
     }
@@ -90,6 +96,13 @@ pub enum Motion {
 impl Motion {
     pub fn moving(&self) -> bool {
         !matches!(self, Motion::Still)
+    }
+
+    /// See `Transition::restart`.
+    pub fn restart(&mut self) {
+        if let Motion::In(t) | Motion::Out(t) = self {
+            t.restart();
+        }
     }
 
     pub fn leaving(&self) -> bool {

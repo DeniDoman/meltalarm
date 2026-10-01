@@ -101,6 +101,7 @@ A slower, right answer beats a fast one that needs two rounds of fixes.
 | A compact header ran under the close button; the text width had been estimated. | Measure, never estimate. Check the longest string in the smallest layout. |
 | The docs described motion that was never built, an app icon that never shipped, and state removed weeks earlier. | Drift is a bug. Docs change with code. |
 | hidapi had a fourth write API that the read-only lint didn't cover. | Re-check safety guarantees against the real dependency, not the doc that describes them. |
+| Motion was checked frame by frame, but only for the tray window opening at app start. Opened by a real tray click, the animation stalled for most of a second: the timer only started in the update pass. | Test each way a behavior can start, not one. Measure the timing; a screenshot can't show a stall. |
 
 ---
 

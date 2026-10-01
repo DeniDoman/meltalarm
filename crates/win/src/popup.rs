@@ -39,11 +39,23 @@ pub struct Popup {
     /// The last drawn picture, kept while it is open or fading (DESIGN.md "Motion").
     frame: Option<Frame>,
     motion: Motion,
+    /// The entry starts with the next shown frame.
+    fresh: bool,
 }
 
 impl Popup {
     pub fn new(hwnd: HWND) -> Self {
-        Popup { hwnd, connector: None, anchor: None, hidden_at: None, origin: (0, 0), scale: 1.0, frame: None, motion: Motion::Still }
+        Popup {
+            hwnd,
+            connector: None,
+            anchor: None,
+            hidden_at: None,
+            origin: (0, 0),
+            scale: 1.0,
+            frame: None,
+            motion: Motion::Still,
+            fresh: false,
+        }
     }
 
     /// `x`, `y`: client pixels.
@@ -85,6 +97,7 @@ impl Popup {
         self.connector = Some(key.clone());
         // It rises from its icon and fades in (DESIGN.md "Motion").
         self.motion = if anim::enabled() { Motion::In(Transition::new(anim::RISE)) } else { Motion::Still };
+        self.fresh = true;
         // Freeze the anchor at open time (the cursor may move while the popup stays).
         self.anchor = anchor.or_else(|| {
             let mut p = POINT::default();
@@ -219,6 +232,9 @@ impl Popup {
         });
         if let Ok(frame) = frame {
             self.frame = Some(frame);
+            if std::mem::take(&mut self.fresh) {
+                self.motion.restart();
+            }
             self.show_frame();
         }
     }

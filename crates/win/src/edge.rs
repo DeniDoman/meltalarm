@@ -83,11 +83,13 @@ pub(crate) struct EdgeWindows {
     extra_style: WINDOW_EX_STYLE,
     title: PCWSTR,
     motion: Motion,
+    /// The drop starts with the next shown frame (after the windows are drawn).
+    fresh: bool,
 }
 
 impl EdgeWindows {
     pub fn new(class: PCWSTR, extra_style: WINDOW_EX_STYLE, title: PCWSTR) -> Self {
-        EdgeWindows { wins: vec![], class, extra_style, title, motion: Motion::Still }
+        EdgeWindows { wins: vec![], class, extra_style, title, motion: Motion::Still, fresh: false }
     }
 
     /// Make sure there is exactly one window per current monitor, and start the drop if the
@@ -134,10 +136,14 @@ impl EdgeWindows {
 
     fn enter(&mut self) {
         self.motion = if anim::enabled() { Motion::In(Transition::new(anim::DROP)) } else { Motion::Still };
+        self.fresh = true;
     }
 
     /// Show every window as far as its motion has come.
-    pub fn show(&self) {
+    pub fn show(&mut self) {
+        if std::mem::take(&mut self.fresh) {
+            self.motion.restart();
+        }
         let shown = self.motion.shown(Instant::now());
         for w in &self.wins {
             w.show(shown);

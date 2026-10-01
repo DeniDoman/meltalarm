@@ -216,7 +216,9 @@ impl App {
         self.animate();
     }
 
-    /// Keep the animation timer running exactly while something moves.
+    /// Keep the animation timer running exactly while something moves. Called after every
+    /// reconcile and at the end of every window procedure, because a transition can start from
+    /// any of them (a tray click, a lost focus, Esc).
     fn animate(&mut self) {
         let moving = self.popup.moving() || self.overlay.moving() || self.strip.moving();
         if moving != self.animating {
@@ -426,6 +428,7 @@ extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR
     if let Some(d) = deferred {
         run_deferred(hwnd, d);
     }
+    with_app(|a| a.animate());
     // SAFETY: default processing for everything we did not handle.
     result.unwrap_or_else(|| unsafe { DefWindowProcW(hwnd, msg, wp, lp) })
 }
@@ -470,6 +473,7 @@ extern "system" fn popup_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> L
         }
         _ => {}
     }
+    with_app(|a| a.animate());
     // SAFETY: default processing.
     unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
 }
