@@ -120,7 +120,7 @@ MeltAlarm logs enough on the first real event to settle these (§9).
 
 ### 4.2 Distribution
 - A GitHub release holds the exe and a `SHA256SUMS` file. The exe is built by GitHub's CI from the tagged commit, and its build provenance is attested, so anyone can check where a download came from (Architecture §10). The downloaded file's name and folder don't matter (browsers may rename it, e.g. `meltalarm (1).exe`).
-- v1 is unsigned. On first launch Windows SmartScreen shows "Windows protected your PC"; the README explains *More info → Run anyway* and how to check the SHA256.
+- v1 is unsigned. On first launch Windows SmartScreen shows "Windows protected your PC"; the README tells users to click *More info → Run anyway*. The release page carries `SHA256SUMS` and the notes on checking a download.
 - The app uses no network, so it never checks for updates. Users learn about new versions from GitHub (*Watch → Releases*).
 
 ### 4.3 Where it lives, and why
