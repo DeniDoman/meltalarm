@@ -127,8 +127,7 @@ impl Core {
                 let c = self.conns.first()?;
                 let mut v = self.alarm_for(c, now, true);
                 v.what = "Current imbalance · sample data".into();
-                v.numbers = "Lowest wire 2.1 A, the others 9.7–9.9 A.
-Imbalance 7.8 A.".into();
+                v.numbers = "Lowest wire 2.1 A, the others 9.7–9.9 A.\nImbalance 7.8 A.".into();
                 v.bars = test_bars();
                 v.right_label = "POWER CUT IN".into();
                 v.right_value = "~3:00".into();
@@ -157,9 +156,9 @@ Imbalance 7.8 A.".into();
                     sub: "Inspect the cable before the next session. The note is in MeltAlarm.".into(),
                     what: format!("{reason} · cleared after {}", crate::log::secs(*lasted)),
                     numbers: if reason == "Wire overload" {
-                        format!("Every wire is below the {} rating again. Sound stopped.", amps(self.limits.limits.rating))
+                        format!("Every wire is below the {} rating again.\nSound stopped.", amps(self.limits.limits.rating))
                     } else {
-                        "The PSU reports Normal again. Sound stopped.".into()
+                        "The PSU reports Normal again.\nSound stopped.".into()
                     },
                     right_label: "ALARM LASTED".into(),
                     right_value: mmss(*lasted),
@@ -221,12 +220,9 @@ Imbalance 7.8 A.".into();
         };
         let (what, numbers) = match (status, &our_line) {
             // Both judges: the PSU's limit line, then ours.
-            (Some(s), Some(ours)) => (what_of(s), format!("{}
-{ours}", psu_lines(s).pop().unwrap_or_default())),
-            (Some(s), None) => (what_of(s), psu_lines(s).join("
-")),
-            (None, Some(ours)) => ("Wire overload · measured by MeltAlarm".to_owned(), format!("{ours}
-The PSU hasn't raised an alarm yet.")),
+            (Some(s), Some(ours)) => (what_of(s), format!("{}\n{ours}", psu_lines(s).pop().unwrap_or_default())),
+            (Some(s), None) => (what_of(s), psu_lines(s).join("\n")),
+            (None, Some(ours)) => ("Wire overload · measured by MeltAlarm".to_owned(), format!("{ours}\nThe PSU hasn't raised an alarm yet.")),
             (None, None) => (String::new(), String::new()),
         };
         let (right_label, right_value) = if critical {

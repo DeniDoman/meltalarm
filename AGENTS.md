@@ -153,7 +153,7 @@ Stage explicit paths, never `git add -A`. Use the repository's configured commit
 - English everywhere.
 - Docs: plain, short, concrete sentences. Prefer tables and lists to paragraphs.
 - Code reads like the code around it: comment density, naming, idiom. `rustfmt` is not enforced yet, so don't reformat files wholesale.
-- Say "12V-2x6", never "12VHPWR". Users read "GPU power cable"; only the README bridges the two.
+- Say "12V-2x6", never "12VHPWR". Users read "GPU power cable"; only the README bridges the two (and names 12VHPWR once, so people recognize the connector).
 
 ---
 

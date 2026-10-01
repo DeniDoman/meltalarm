@@ -1,6 +1,6 @@
 # MeltAlarm — Functional Specification
 
-**Status:** v2.9 · **Date:** 2026-10-01 · Companions: `DESIGN.md` (how it looks), `ARCHITECTURE.md` (how it is built) · Changes: §13
+**Status:** v2.10 · **Date:** 2026-10-01 · Companions: `DESIGN.md` (how it looks), `ARCHITECTURE.md` (how it is built) · Changes: §13
 
 **Supported hardware:**
 - MSI **MPG Ai1300TS** and **MPG Ai1600TS** PSUs, connected by USB.
@@ -376,7 +376,7 @@ This is a **status** (§8), not an episode: nothing interrupts the user. The app
 
 ### 7.0 Names and words
 
-- **The thing we watch is the "GPU power cable"**, everywhere the user reads it: screens, notifications, voice, Settings and the log. "12V-2x6" appears only in the README, which bridges the two: *"MeltAlarm watches the GPU power cable: the 16-pin cable from your PSU's 12V-2x6 socket to the graphics card. Cable 1 and cable 2 are the PSU's two 12V-2x6 sockets, numbered as on the PSU."*
+- **The thing we watch is the "GPU power cable"**, everywhere the user reads it: screens, notifications, voice, Settings and the log. "12V-2x6" appears only in the README, which bridges the two: the GPU power cable is the 16-pin cable on the PSU's 12V-2x6 connector (the revised 12VHPWR, named once so people recognize it), and cables 1 and 2 are numbered as on the PSU.
 - **The number appears only when it tells something.** With one tracked cable (most users) the screens say just *GPU power cable*. The number is added (*GPU power cable 2*, short *Cable 2* where space is tight) when more than one cable is tracked, or when the cable isn't tracked (an alarm on it must say which). Settings lists both sockets, so it always numbers. The **log always numbers**: it is a permanent record and stays unambiguous after a second GPU is added.
 - **No wire numbers on screen.** Which physical pin a PSU wire number is has not been verified (§1), so "wire 3" can't send anyone to a pin. Screens say *a wire* / *one wire*, and the affected bar carries the color. The log keeps the wire index for diagnostics.
 - **Where space is tight** (tooltip, the caution strip, the Compact floating view) a numbered cable is *Cable 2*.
@@ -429,7 +429,7 @@ This is a **status** (§8), not an episode: nothing interrupts the user. The app
 - Read-only info block: MeltAlarm version, PSU model, firmware, serial, and the state of the PSU's protection (MSI: Safeguard+).
 - Buttons: **Test alarm** (§8.5) and **Open log folder**. Uninstalling is done from Installed apps (§4.7).
 - Settings apply immediately. They are stored in `%APPDATA%\MeltAlarm\settings.toml`.
-- **Cable limits in the file only** (§6.1), for advanced users; the README documents them: `limit_rating`, `limit_alarm`, `limit_alarm_seconds`, `limit_fast`, `limit_instant`, `limit_uneven` (amps, seconds). Read at start.
+- **Cable limits in the file only** (§6.1), for advanced users; the README points here: `limit_rating`, `limit_alarm`, `limit_alarm_seconds`, `limit_fast`, `limit_instant`, `limit_uneven` (amps, seconds). Read at start.
 
 ### 7.4 Floating monitor
 
@@ -706,6 +706,7 @@ During a game Windows holds notifications back silently and shows them in the no
 
 | Version | Date | Changes |
 |---|---|---|
+| 2.10 | 2026-10-01 | The README's role: it bridges the cable's names and points to §7.3 for the limit keys |
 | 2.9 | 2026-10-01 | The notch's numbers: at most two lines, one fact per line (§8.2) |
 | 2.8 | 2026-10-01 | Uninstall has one entry point, Installed apps; no *Uninstall…* in the menu or Settings (§4.7) |
 | 2.7 | 2026-10-01 | `Not connected` is a state on every surface: a cable without current is never `OK` (§6.7, §7.1); the short name `Cable 2` where space is tight (§7.0) |
