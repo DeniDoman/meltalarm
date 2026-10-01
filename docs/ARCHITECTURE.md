@@ -1,31 +1,24 @@
-# MeltAlarm — Software Architecture v2
+# MeltAlarm — Software Architecture
 
-**Status:** v2.4 · **Date:** 2026-10-01 · **Supersedes:** v2 (2026-09-27) · v2.4: the cable guard (MeltAlarm's own limits, D3 revised as D15), the alert ladder, cable notes and `state.toml` (Spec v2.4 §6, §8; §5.1 below) · v2.3: floating monitor (Spec §7.4, §7.2 below) · v2.2: program lifecycle (install, update, uninstall, autostart) split into a portable crate plus per-OS backends (Spec v2.2 §4, §7.1) · v2.1: connect handshake, `Discovery::NotReady`, a startup that never gives up on a present device (Spec v2.1, F19) · **Inputs:** `FUNCTIONAL_SPEC.md`, `DESIGN.md`
+**Status:** v3 · **Date:** 2026-10-01 · Companions: `FUNCTIONAL_SPEC.md` (what), `DESIGN.md` (how it looks) · Changes: §16
 
-**What changed from v1:**
-- The alarm logic no longer speaks "MSI". It works on a **vendor-neutral model**, so other devices can be added later.
-- Everything except the UI shell is **portable** (Windows today, Linux next).
-- `core` is hosted "sans-IO" by a portable `runtime`, and frontends only render a declarative view.
-- A **v0 tonight** cut is defined.
+This document describes the system as built. Where something is planned but not built, it says so.
 
 ---
 
 ## 1. Priorities and quality attributes
 
-**Delivery order:**
-1. **v0, tonight:** a working app on the reference PC.
-2. **v1:** a GitHub-ready Windows release.
-3. **Next iteration:** Linux, and other sensing devices.
+**Delivery:** v0 (the reference PC) and the cable guard (0.3) are done. Next: **v1**, a GitHub release for Windows (§14). After that: **Linux** and **other sensing devices**. The architecture keeps both open without building them.
 
 **Quality attributes, highest first.** When two conflict, the higher one wins.
 
 | # | Attribute | Meaning here |
 |---|---|---|
-| Q1 | **Hardware safety** | Nothing but allowlisted reads ever reaches a device. This is structural, not a convention. |
+| Q1 | **Hardware safety** | Nothing but allowlisted reads ever reaches a device. This is structural, not a convention (§9). |
 | Q2 | **Alarm reliability** | An alarm (the cable guard or the device's verdict) reaches the user within 2 s, never clears without data, and survives any single component failure (voice, overlay, task…). |
 | Q3 | **Footprint** | ≤ 5 MB private idle, ~0 % CPU, no GPU driver in the process |
 | Q4 | **Evolvability** | New device family = new source crate. New OS = new frontend crate. `core` untouched in both cases. |
-| Q5 | **Delivery speed** | v0 tonight: no speculative machinery, only seams that Q4 needs |
+| Q5 | **Simplicity** | No speculative machinery; only the seams Q4 needs |
 
 ---
 
@@ -33,13 +26,13 @@
 
 ```
                         ┌──────────────────────────────────────────┐
-  frontends (per OS)    │ meltalarm-win (bin)     meltalarm-linux  │   render view, run platform effects
-                        │ Win32/D2D/SAPI/Tasks    (next iteration) │   composition root (picks drivers)
+  frontends (per OS)    │ meltalarm-win (bin)     meltalarm-linux  │   render the view, run platform effects;
+                        │ Win32/D2D/SAPI/Tasks    (next iteration) │   composition root (picks the drivers)
                         └────────────────┬─────────────────────────┘
                                          │ ViewModel ▲ │ UserAction ▼
                         ┌────────────────▼─────────────────────────┐
   host (portable)       │ meltalarm-runtime                        │   acquisition thread, discovery,
-                        │                                          │   reconnect, settings file, alarm log
+                        │                                          │   reconnect, settings/state files, log
                         └───────┬─────────────────────────┬────────┘
                                 │ Event ▼ / Output,View ▲ │ Driver/Source traits
                         ┌───────▼────────┐       ┌────────▼─────────────────┐
@@ -48,11 +41,12 @@
                                 │                         │ implemented by
                         ┌───────▼─────────────────────────▼───┐   ┌───────────────────────────┐
   vocabulary (pure)     │ meltalarm-model                     │◄──│ meltalarm-source-msi      │  MSI Ai1300TS/Ai1600TS
-                        └─────────────────────────────────────┘   │ (future: source-<vendor>) │
+                        └─────────────────────────────────────┘   │ meltalarm-source-sim (dev)│  scripted readings
+                                                                  │ (future: source-<vendor>) │
                                                                   └───────────────────────────┘
 ```
 
-Beside this stack, `meltalarm-lifecycle` (portable, std only) decides what a launch does and runs install/update/uninstall steps that each frontend supplies (§7.1).
+Beside this stack, `meltalarm-lifecycle` (portable, std only) decides what a launch does and runs the install, update and uninstall steps each frontend supplies (§7.1).
 
 **Dependency rule:** arrows point toward stability. `model` depends on nothing. `core` depends only on `model`. Sources know `model` + `source-api`, never `core`. `runtime` knows `core` + `source-api`, never a concrete source. Only a frontend's `main` (the composition root) names concrete drivers.
 
@@ -62,14 +56,15 @@ Beside this stack, `meltalarm-lifecycle` (portable, std only) decides what a lau
 
 | Crate | Kind | Depends on | Portable | Responsibility |
 |---|---|---|---|---|
-| `meltalarm-model` | lib, pure, `forbid(unsafe)` | — | ✅ | Neutral vocabulary: readings, verdicts, protection, faults, source info, capabilities (§4.1) |
-| `meltalarm-core` | lib, pure, `forbid(unsafe)` | model | ✅ | All decisions: levels, attribution, presence, health, alarm state machine, snooze, countdown, log events, settings model, **ViewModel and all user-facing text** (§5) |
+| `meltalarm-model` | lib, pure, `forbid(unsafe)` | — | ✅ | Neutral vocabulary: readings, verdicts, protection, faults, source info, capabilities, the healthy-tick rule (§4.1) |
+| `meltalarm-core` | lib, pure, `forbid(unsafe)` | model | ✅ | All decisions: levels, cable guard, alarm, alert ladder, cable notes, log events, settings and state formats, **ViewModel and every user-facing text** (§5) |
 | `meltalarm-source-api` | lib | model, hidapi | ✅ | `Driver` / `Source` traits, `HidContext` (one shared `HidApi`), source authoring rules (§4.2) |
-| `meltalarm-source-msi` | lib | model, source-api, hidapi, windows-sys (cfg windows) | ✅ (lock is cfg) | MSI protocol: closed request set, frame decoding, transactions, `Global\MSI_PSU_Mutex` (Windows), mapping to the model (§4.3) |
-| `meltalarm-runtime` | lib | core, source-api | ✅ | Portable host: acquisition thread, discovery and reconnect, settings persistence, log sink, timers and wake-ups (§6) |
+| `meltalarm-source-msi` | lib | model, source-api, windows-sys (cfg windows) | ✅ (lock is cfg) | MSI protocol: closed request set, frame decoding, transactions, `Global\MSI_PSU_Mutex` (Windows), mapping to the model (§4.3) |
+| `meltalarm-source-sim` | lib, dev only | model, source-api | ✅ | Scripted scenarios, no device traffic; used by `simulate` builds (§4.4) |
+| `meltalarm-runtime` | lib, `forbid(unsafe)` | core, source-api | ✅ | Portable host: acquisition thread, discovery and reconnect, settings/state files, log sink, wake-ups (§6) |
 | `meltalarm-lifecycle` | lib, std only | — | ✅ | Program lifecycle, OS-free: launch decision (Spec §4.4), version compare, all-or-nothing step runner, the `Autostart` / `Instances` / `Step` traits (§7.1) |
-| `meltalarm-win` | bin `meltalarm` | runtime, core, lifecycle, source-msi, windows | ❌ Windows | Tray, menu, popup, overlay, audio, voice, hotkey, power events, and the Windows lifecycle backend: install steps, Task Scheduler autostart, single instance + control window (§7, §7.1) |
-| `psu-probe` (tools/) | bin | source-msi | ✅ | Read-only diagnostics, serial redacted, for hardware reports and porting (v1) |
+| `meltalarm-win` | bin `meltalarm` | runtime, core, lifecycle, source-msi, source-sim (feature `simulate`), windows | ❌ Windows | Tray, menu, flyout, floating view, notch, caution strip, audio, voice, hotkey, power events; the Windows lifecycle backend (§7) |
+| *planned (v1)* `psu-probe` | bin | source-msi | ✅ | Read-only diagnostics, serial redacted, for hardware reports and porting |
 | *future* `meltalarm-linux` | bin | runtime, core, sources | Linux | §11.1 |
 | *future* `meltalarm-source-<vendor>` | lib | model, source-api | per device | §11.2 |
 
@@ -81,15 +76,16 @@ Names carry the `meltalarm-` prefix. A crate named `core` would shadow Rust's bu
 
 ### 4.1 Neutral model (`meltalarm-model`)
 
-A *source* is anything that measures per-wire current on 12V-2x6 connectors: today a PSU; later possibly a GPU, or an inline meter.
+A *source* is anything that measures per-wire current on 12V-2x6 connectors: today a PSU; later possibly a GPU or an inline meter.
 
 ```rust
 pub struct SourceInfo {
-    pub id: SourceId,                 // stable, e.g. "msi:ai1300ts" — keys settings
+    pub id: SourceId,                     // stable, e.g. "msi:ai1300ts" — keys settings, state, placement
     pub vendor: String, pub model: String,
     pub firmware: Option<String>, pub serial: Option<String>,
-    pub connectors: Vec<ConnectorInfo>,   // index + label, e.g. (0, "12V-2x6 #1")
+    pub connectors: Vec<ConnectorInfo>,   // ConnectorInfo { index }: numbered as on the device
     pub caps: Capabilities,
+    pub protection_name: Option<String>,  // the device's name for its protection, e.g. "Safeguard+"
 }
 pub struct Capabilities {
     pub device_verdict: bool,   // device reports its own Normal/alarm status per connector
@@ -105,27 +101,30 @@ pub struct Report {                               // one poll (one tick)
     pub protection: Option<Protection>,           // Some when (re)read; core keeps the last one
     pub diagnostic: Option<String>,               // raw status for the log during an alarm (MSI: C1 hex)
 }
+impl Report { pub fn is_healthy(&self, caps: &Capabilities) -> bool; }
 pub struct ConnectorReading { pub index: u8, pub wires: [Option<f32>; 6] }   // amps
 pub struct Verdict { pub index: u8, pub status: DeviceStatus, pub flagged: [bool; 6] }
 pub enum DeviceStatus { Normal, OverCurrent, Imbalance, CriticalOverCurrent, Unknown(u8) }
 pub struct Protection {
     pub enabled: bool,
-    pub wire_limit: Option<f32>, pub spread_limit: Option<f32>,
-    pub wire_trigger: Option<Duration>, pub spread_trigger: Option<Duration>,
+    pub wire_limit: Option<f32>, pub imbalance_limit: Option<f32>,
+    pub wire_trigger: Option<Duration>, pub imbalance_trigger: Option<Duration>,
     pub cutoff_after: Option<Duration>, pub hard_wire_limit: Option<f32>,
 }
 pub enum Fault { OverTemperature, FanFailure, OverPower, RailOverCurrent(&'static str), Other(String) }
+pub struct ConnectorKey { pub source: SourceId, pub index: u8 }   // "msi:ai1300ts:1" in files
 ```
 
 - `Option` everywhere a device may not provide a value. `core` must behave sensibly for every combination, so a future source can declare what it lacks instead of faking it.
-- **Tick health (conservative):** a tick is *healthy* only if `readings` is present **and**, for sources with `device_verdict`, `verdicts` is present. A missing verdict never reads as "Normal" (Spec §8.6).
+- **Tick health (conservative), `Report::is_healthy`:** a tick is healthy only if `readings` is present **and**, for sources with `device_verdict`, `verdicts` is present. A missing verdict never reads as "Normal" (Spec §8.6). The acquisition thread and core use the same function.
+- **Names are MeltAlarm's.** A source never names connectors for the user; core does ("GPU power cable 1", Spec §7.0). A vendor's own words reach the user only through `protection_name` and `Fault`.
 
 ### 4.2 Traits (`meltalarm-source-api`)
 
 ```rust
 pub trait Driver: Send + Sync {
     fn name(&self) -> &'static str;                        // "MSI MPG Ai1300TS / Ai1600TS"
-    fn discover(&self, hid: &mut HidContext) -> Discovery; // Found(Box<dyn Source>) | NotPresent | NotReady(reason) | Unusable(msg)| NotPresent | Unsupported(String)
+    fn discover(&self, hid: &mut HidContext) -> Discovery; // Found(Box<dyn Source>) | NotPresent | NotReady(reason) | Unusable(msg)
 }
 pub trait Source: Send {
     fn info(&self) -> &SourceInfo;
@@ -156,9 +155,9 @@ pub trait Source: Send {
 | `0xE0` words 3–14 | `readings[0..2].wires` |
 | `0xC1` status bytes | `verdicts[..].status` (0→Normal, 1→OverCurrent, 2→Imbalance, 3→CriticalOverCurrent, n→Unknown(n)) |
 | `0xE1` wire flags / other flags | `verdicts[..].flagged` / `faults` |
-| `0xC0` | `protection` (OCP→`wire_limit`, Diff→`spread_limit`, triggers, Warning_Time→`cutoff_after`); `hard_wire_limit = 18 A` (firmware constant) |
+| `0xC0` | `protection` (OCP→`wire_limit`, Diff→`imbalance_limit`, triggers, Warning_Time→`cutoff_after`); `hard_wire_limit = 18 A` (firmware constant) |
 | raw `0xC1` frame | `diagnostic` (hex) |
-| Capabilities | all `true` |
+| Capabilities, protection name | all `true`; `"Safeguard+"` |
 
 **Internals:**
 - `protocol` module (pure): `enum Request { Handshake, Read(Reg) }`, the closed set of 9 packets; `packet(Request)`, the only byte builder; reply classification per request (echo, length, busy rule); decoders; LINEAR11.
@@ -169,6 +168,10 @@ pub trait Source: Send {
 - **Connect** (`discover`): open → handshake → identity (`10`–`13`) → `Found`. An open or handshake failure gives `NotReady(reason)`; a missing lock gives `Unusable`.
 - **Poll policy** (source-internal): E0, C1 and E1 every poll; C0 at start and every 60 s. No handshake per tick.
 - **Linux note:** hidapi's hidraw backend works, and the frame parser already tolerates a present or stripped report ID. Non-root access needs a udev rule, which is Linux packaging, not code.
+
+### 4.4 Simulated source (`meltalarm-source-sim`)
+
+A `Driver` that replays a scenario chosen with `MELTALARM_SIM` (`cycle`, `normal`, `idle`, `caution`, `overload`, `uneven`, `red`, `alarm`, `critical`, `fault`, `nodata`, `silent`, `slow`). It sends nothing to any device. Frontends use it instead of the real drivers in their `simulate` build, so every alert path can be exercised on any machine. It is also the second implementation of the source API, which keeps the abstraction honest.
 
 ---
 
@@ -182,69 +185,60 @@ pub enum Event {
 }
 impl Core {
     pub fn new(settings: Settings) -> Self;
-    pub fn restore(&mut self, state: CoreState);        // cable notes + "an alarm was open" from state.toml
+    pub fn restore(&mut self, state: CoreState);            // cable notes + "an alarm was open" from state.toml
     pub fn set_wall_clock(&mut self, wall: fn() -> String); // only to date-stamp cable notes
     pub fn handle(&mut self, ev: Event, now: Instant) -> Output;
-    pub fn view(&self, now: Instant) -> ViewModel;   // pure function of state + now
+    pub fn view(&self, now: Instant) -> ViewModel;          // pure function of state + now
 }
 pub struct Output { pub log: Vec<LogEvent>, pub settings_changed: Option<Settings>, pub state_changed: Option<CoreState>, pub next_wake: Option<Instant> }
 ```
 
 - **No IO, no clock, no threads, no platform types.** Time comes in as `now`. Wall-clock strings for log lines are added by `runtime`. The one exception is an injected `fn() -> String` that date-stamps a cable note when it is created (tests inject a fixed one).
-- `ConnectorKey = (SourceId, index)` keys everything per connector (tray icons, settings, logs), so multiple sources are possible later without redesign. v0 has one source.
+- `ConnectorKey = (SourceId, index)` keys everything per connector (tray icons, settings, notes, placement). Core holds **one source at a time**; a different source replaces the connectors.
 - **State:**
   - per source: info, last `Protection`, faults
-  - per connector:
-    - last good reading and its age
-    - wire levels and spread level
-    - presence (last > 0 A)
-    - RED episode (start, peaks, last-red)
-    - the sustained-notice flag
-    - device verdict and its first-seen instant
-    - the **cable guard** (`guard` module): per-wire overload episodes, the connector's active overload, the caution and uneven-load episodes
-    - its cable note
-  - health: consecutive failed ticks; NO DATA since
-  - alarm phase: `Idle | Active | Snoozed{until, snapshot of (connector, cause)} | Cleared{until, lasted, reason} | Test{until, strip_until}`; a cause is `Overload | Device(status)`
-  - the caution strip: `{chime id, text, until}`
-  - settings, including the resolved cable limits (`limits` module)
-- **Rules**, each in its own module with its own tests:
+  - per connector (`Conn`): last reading, live evaluation, presence (last > 0 A), device verdict and its first-seen instant, the cable guard, the episode whose peak keeps the cable note current
+  - health: consecutive unhealthy ticks; NO DATA since
+  - alarm phase: `Idle | Active | Snoozed{until, snapshot} | Cleared{until, lasted, reason, label} | Test{until, strip_until, chime}`; a cause is `Overload | Device(status)`
+  - the caution strip `{view, until}`, the latest notice
+  - `CoreState` (persisted): cable notes per connector, the open-alarm flag
+  - settings, with the resolved cable limits
+- **Modules follow the spec:**
 
-  | Spec | Rule |
-  |---|---|
-  | §6.1 | `limits`: the v1 defaults, file overrides, validation (all or nothing), the LIMITS log text |
-  | §6.2 | `levels`: live colors from the cable limits + median attribution; the PSU only adds `E1` flags and its imbalance status |
-  | §6.3–6.4 | `guard`: pure, sample-driven episodes (overload with hysteresis, caution, uneven load); gaps > 3 s break qualification; nothing fires without a fresh sample. Emits `GuardEvent`s that core turns into log lines, notes, the strip and notices |
-  | §8.1 | the alarm is active iff any (connector, cause) is active: the guard's overload **or** the device's verdict ≠ Normal (D15), and Alerts are on |
-  | §6.6–6.9 | faults (a new one → caution), presence, stale, NO DATA after 3 unhealthy ticks (after having had data → caution), protection disabled |
-  | §8.8–8.10 | the caution strip (once per episode, 10 s, one chime id, never while an alarm cause is active), advisory and after-alarm notices, cable notes (severity order, `CoreState`) |
-  | §8.4 | countdown only if `cutoff_after` is known |
-  | §8.5 | snooze and escalation (new code, Critical, another connector) |
-  | §8.6 | clear → 5 s cleared phase; never clear during NO DATA |
-  | §9 | log events, RED merge 10 s, raw diagnostic every 10 s during an alarm |
-  | Spec §5.1 | `SourcePending(reason)` before the first connection → `Connecting`. After 2 min: `NotConnected` logged once, plus a `notice`. The first `SourceConnected` after that logs `Connected` (and how long it took). |
+  | Module | Spec | Rule |
+  |---|---|---|
+  | `lib` | §5, §6.6–6.9 | Event intake: source connect/loss, reports (health, verdicts, faults, protection), user actions, time; NO DATA after 3 unhealthy ticks (after having had data → caution); first-run tracking; the wake schedule |
+  | `limits` | §6.1 | The v1 defaults, file overrides, validation (all or nothing), the LIMITS log text |
+  | `levels` | §6.2 | Live colors from the cable limits + median attribution; the device only adds `E1` flags and its imbalance status |
+  | `guard` | §6.3–6.4 | Pure, sample-driven episodes: overload with hysteresis, caution, uneven load; gaps > 3 s break qualification; nothing fires without a fresh sample. Emits `GuardEvent`s |
+  | `alarm` | §8.1–8.6 | Active iff any (connector, cause) is active and Alerts are on (D15); snooze and escalation; the 5 s green clear, never during NO DATA; the test alarm; the notch's content (`AlarmView`), the countdown (only with `cutoff_after`), the sound script |
+  | `ladder` | §8.8–8.10 | Guard events → log lines, cable notes (severity order), the caution strip (once per episode, 10 s, one chime id, never during an alarm), advisory and after-alarm notices |
+  | `view` | §7 | The `ViewModel`: connector views (names, chip, bars, live lines, tooltip, compact summary), health, the knee scale `bar_share` |
+  | `text` | §7.0, §9 | Shared wording helpers: amps, durations, dates, names, the device's verdict and protection in words |
+  | `log` | §9 | Log events and their line format |
+  | `settings`, `state` | §7.3, §8.10 | The `key = value` file formats (parsing is pure; runtime does the IO) |
 
-  A real alarm pre-empts a Test. A Test ends on Snooze (no re-show) or after 30 s, and is never logged as a PSU alarm.
+  A real alarm pre-empts a Test. A Test ends on Snooze (no re-show) or after 30 s, is never logged as an alarm and leaves no note.
 - **ViewModel** is declarative and complete. Frontends only render and reconcile it.
 
   ```rust
   pub struct ViewModel {
-      pub health: Health,                      // Starting | Connecting{since, reason} | Live | Stale{age} | NoData{since}
-      pub connectors: Vec<ConnectorView>,      // all connectors: tracked flag, present, wires[6]{amps, level, flagged},
-                                               // imbalance (+level), bar_limit (alarm) + caution_line (rating), glyph: Normal|Alarm|NoData|NotConnected,
-                                               // attention marker, notes; `label` is the display name (Spec §7.0)
+      pub health: Health,                      // Starting | Connecting{since} | Live | Stale{age} | NoData{since}
+      pub connectors: Vec<ConnectorView>,      // every connector, tracked or not: name, chip, wires[6]{amps, level, flagged},
+                                               // imbalance (+level), bar_limit + bar_rating, glyph, attention marker,
+                                               // live lines, cable note, PSU status, tooltip, compact summary
       pub source: Option<SourceView>,          // model, firmware, protection summary line, fault lines
-      pub alarm: Option<AlarmView>,            // phase, band color role, headline, action, sub, detail lines, right block, snooze allowed
+      pub alarm: Option<AlarmView>,            // the notch: kind, band color, headline, action, details, right block, snooze
       pub audio: Option<AudioScript>,          // Some ⇔ the alarm should be sounding now
       pub settings: Settings,                  // for the menu / settings window
       pub connecting: Option<String>,          // tooltip for the placeholder icon while no source has connected yet
-      pub notice: Option<Notice>,              // one-shot notification {id, title, text, warning, connector}; frontends show each id once
-      pub caution: Option<CautionView>,        // the caution strip {chime, what, action, test}; a new `chime` id plays the chime once
+      pub notice: Option<Notice>,              // one-shot notification {id, title, text, warning, connector}
+      pub caution: Option<CautionView>,        // the caution strip {chime, place, what, action, test}
   }
-  pub struct CoreState { pub notes: BTreeMap<ConnectorKey, CableNote>, pub alarm_open: Option<ConnectorKey> }
-  pub struct AudioScript { pub steps: Vec<AudioStep>, pub repeat: bool }   // [Sound×3 with 300 ms gaps, Speak(text)]
   ```
 
-- **All user-facing strings are built here** (English): headlines, voice line, tooltip, notes, and the cable names: core names a connector "GPU power cable N" (the log always uses the number; views add it only when Spec §7.0 says so). A source's own connector label (`12V-2x6 #1`) is never shown. Every frontend (Windows notch, Linux notification) says the same thing, and the text is unit-tested.
+- **Every user-facing string is built here** (English): headlines, voice line, tooltip, notes, cable names, log lines. Every frontend (Windows notch, Linux notification) says the same thing, and the text is unit-tested. Vendor words come only from the source (`protection_name`, faults).
+- **Presentation rules every frontend must share** live here too: the knee scale of the cut bars (`bar_share`, DESIGN.md "Cut bars"). Geometry, fonts and colors stay in the frontend.
 
 ---
 
@@ -259,10 +253,10 @@ pub struct Output { pub log: Vec<LogEvent>, pub settings_changed: Option<Setting
       pub fn pump(&mut self, now: Instant) -> Update;  // after a waker call: drain source events → core
       pub fn user(&mut self, a: UserAction, now: Instant) -> Update;
       pub fn wake(&mut self, now: Instant) -> Update;  // at Update.next_wake
-      pub fn suspend(&mut self) / resume(&mut self);
+      pub fn suspend(&mut self, now: Instant); pub fn resume(&mut self, now: Instant) -> Update;
       pub fn view(&self, now: Instant) -> Arc<ViewModel>;
   }
-  pub struct Update { pub view_changed: bool, pub next_wake: Option<Instant>, pub lifecycle: Option<Lifecycle> } // DiscoveryFailed(msg) | Fatal(msg)
+  pub struct Update { pub next_wake: Option<Instant>, pub lifecycle: Option<Lifecycle> } // DiscoveryFailed(msg) | Fatal(msg)
   ```
 
 - **Acquisition thread:**
@@ -272,13 +266,14 @@ pub struct Output { pub log: Vec<LogEvent>, pub settings_changed: Option<Setting
      - `Unusable(msg)` → `DiscoveryFailed(msg)` (the app exits)
      - Only if **no supported device was seen at all** for 2 min → `DiscoveryFailed` with the supported-device list from the drivers' names.
   2. Poll every 1000 ms on a drift-free deadline.
-  3. After 3 unhealthy ticks, drop the source and rediscover every 2 s; `discover` repeats the full connect sequence (e.g. the handshake). This is generic for all sources.
+  3. After 3 unhealthy ticks (`Report::is_healthy`), drop the source and rediscover every 2 s; `discover` repeats the full connect sequence (e.g. the handshake). This is generic for all sources.
   4. Pause and resume on suspend.
   5. `catch_unwind` at the thread boundary → `Fatal`.
 - **Watchdog:** `next_wake` is never later than last report + 5 s, so a stalled thread produces a Stale view (Spec §5.4).
-- **Settings store:** `paths.config/settings.toml`, a hand-parsed `key = value` subset, written atomically. Tracked connectors are saved by `ConnectorKey` string (`msi:ai1300ts:1`). Cable-limit overrides (`limit_*`) are written only when set.
-- **State store:** `paths.config/state.toml`, the same format: the cable notes per `ConnectorKey` and whether an alarm is open (Spec §8.10). Loaded into `core.restore()` at start, written atomically on `Output.state_changed`. It is state, not settings, so it lives in its own file.
-- **Log sink:** `paths.log/alarms.log`. `LogEvent::format(wall)` comes from `core`; the sink appends and rotates at 5 MB (Spec §9).
+- **Files** (`write_atomic`: temp file, then rename; a failure never stops monitoring):
+  - `paths.config/settings.toml`: a hand-parsed `key = value` subset. Tracked connectors are saved by `ConnectorKey` (`msi:ai1300ts:1`). Cable-limit overrides (`limit_*`) are written only when set.
+  - `paths.config/state.toml`: the cable notes and the open-alarm flag (Spec §8.10). Loaded into `core.restore()` at start, written on `Output.state_changed`. It is state, not settings, so it lives in its own file.
+  - `paths.log/alarms.log`: `LogEvent::format(wall)` comes from `core`; the sink appends and rotates at 5 MB (Spec §9).
 - `Paths`, the wall clock and the waker are injected, so the crate has no OS dependencies:
 
   | Injected | Windows | Linux |
@@ -291,38 +286,42 @@ pub struct Output { pub log: Vec<LogEvent>, pub settings_changed: Option<Setting
 
 ## 7. `meltalarm-win` — Windows frontend
 
-**Main loop:** a Win32 message loop on the UI thread. `WM_APP_WAKE` (from the waker) → `runtime.pump`. A one-shot `SetTimer` at `next_wake` → `runtime.wake`. After every call, if the view changed, **reconcile**:
+**Main loop:** a Win32 message loop on the UI thread. `WM_WAKE` (from the waker) → `runtime.pump`. A one-shot `SetTimer` at `next_wake` → `runtime.wake`. After every call, **reconcile** the screen with the view:
 
 | Reconciler | Rule (derived only from the ViewModel) |
 |---|---|
-| Tray | One icon per tracked connector (stable `uID`); glyph from `ConnectorView`; blink timer (500 ms) while any glyph is `Alarm`; tooltip. While `connecting` is set and there are no connectors yet: one hollow placeholder icon with that tooltip. |
-| Notice | A tray balloon (`NIF_INFO`) the first time each `notice.id` appears; silent unless `warning`; a click opens `notice.connector`'s flyout |
-| Popup | If open, re-render |
-| Overlay | Visible on every monitor iff `alarm.is_some()` |
-| Strip | The caution strip, visible on every monitor iff `caution.is_some()`: click-through (`WS_EX_TRANSPARENT`), no-activate, topmost |
+| Tray | One icon per tracked connector, icon id = the connector's number (Windows remembers "show on taskbar" per id); glyph and tooltip from `ConnectorView`; blink timer (500 ms) while any glyph is `Alarm`. While `connecting` is set and there are no connectors yet: one hollow placeholder icon. |
+| Notice | A tray notification the first time each `notice.id` appears (once an icon exists); silent unless `warning`; a click opens `notice.connector`'s view |
+| Flyout | If open, redraw |
+| Floating | A window exists iff its placement says floating, the connector is tracked and in the view; redraw each |
+| Notch | Visible on every monitor iff `alarm.is_some()` |
+| Strip | Visible on every monitor iff `caution.is_some()`; redrawn only when its content or the monitors change |
 | Chime | Played once when `caution.chime` differs from the last one played |
-| Audio | Player running iff `audio.is_some()`; restart if the script changed |
-| Hotkey | Ctrl+Alt+G registered iff the overlay is visible and snooze is allowed |
-| Autostart | **Installed copy only** (`Launch::Monitor { portable: false }`, §7.1): Task Scheduler state made to match `settings.run_at_startup`, also repairing the target path, at start and on change. A portable copy never creates, deletes or repoints the task. If the task operation fails, the frontend sends `SetRunAtStartup(<actual state>)`, so the setting and the menu checkmark always show reality, and it adds a one-time error note. |
+| Audio | Player running iff `audio.is_some()`; restarted if the script changed |
+| Hotkey | Ctrl+Alt+G registered iff the notch is visible and snooze is allowed |
+| Autostart | **Installed copy only** (§7.1): the Task Scheduler task made to match `settings.run_at_startup`, also repairing its target. A portable copy never touches it. A failure sends `SetRunAtStartup(<actual state>)` and logs a warning, so the menu always shows reality. |
 
 **Modules:**
 
-| Module | v0 tonight | Later (v1) |
-|---|---|---|
-| `main` | Single instance, `Host` composition (drivers = `[msi]`), TaskDialog on `DiscoveryFailed` / `Fatal`, loop | — |
-| `tray` + `glyph` | `Shell_NotifyIconW` v4, `TaskbarCreated` (allowed through UIPI), DPI-sized ARGB icons, taskbar theme | — |
-| `menu` | **All settings as checkmarks:** track #1/#2 (with presence), alarm, run at startup; Test alarm; Open log; Exit | Shrinks to Settings… / Open log / Exit |
-| `render` | D2D + DirectWrite, software targets, widget kit, DESIGN tokens | — |
-| `popup` | Solid surfaces, 150 ms rise | Acrylic (R1) |
-| `overlay` | Layered, no-activate, per-monitor, topmost re-assert, 200 ms drop | + the caution strip (same monitors, click-through) |
-| `audio` | Alarm thread: `PlaySoundW` file + SAPI `ISpVoice` executing the `AudioScript` | + the caution chime: a WAV synthesized once in memory, `PlaySoundW(SND_MEMORY \| SND_ASYNC)` |
-| `hotkey`, `autostart` (schtasks XML), `power` | ✓ | `autostart` implements `lifecycle::Autostart`; COM `ITaskService` optional |
-| `lifecycle` | — | Windows backend of §7.1: dialogs, steps, control window, `--uninstall` |
-| `floating` + `placement` | — | Floating monitor windows and their saved placement (§7.2) |
-| `settings` window | — | Win11 window per DESIGN §Settings |
-| Win10 fallback | Solid colors (free, since v0 is solid) | Verified pass |
+| Module | Responsibility |
+|---|---|
+| `main` | Single instance, composition (`Host` with the MSI driver, or the simulator), the `App` state, `reconcile`, window procedures, deferred work outside the `App` borrow (menus and dialogs re-enter the window procedure) |
+| `menu` | The tray menu; until the Settings window exists it holds the settings as checkmarks |
+| `tray` + `glyph` + `paint` | `Shell_NotifyIconW` v4, `TaskbarCreated` (allowed through UIPI), DPI-sized ARGB glyphs drawn on the CPU; `paint` is shared with `build.rs` for the app icon |
+| `gfx` | Direct2D + DirectWrite in software mode into layered windows; text measurement; a small painter API |
+| `palette` | Color tokens (DESIGN.md "State colors"), the ambient theme (light/dark), level colors |
+| `card` | The connector card: header and chip, cut bars, live lines, cable note, footer; shared by the flyout, the floating view and (cut bars) the notch |
+| `popup` | The flyout window: anchoring above its icon, hit areas |
+| `floating` + `placement` | Floating views: own mouse capture for move and uniform scale, hover controls, locate pulse; `window.toml` and display identity (§7.2) |
+| `edge` | One window per monitor fused to the top edge, recreated when monitors change; used by `overlay` (the notch) and `strip` (the caution strip) |
+| `overlay`, `strip` | The notch (snooze button, hotkey hint) and the click-through caution strip |
+| `audio` | The alarm thread: `PlaySoundW` file + SAPI `ISpVoice` executing the `AudioScript`; the caution chime synthesized once in memory (`SND_MEMORY \| SND_ASYNC`) |
+| `autostart`, `lifecycle` | Task Scheduler XML; install, update, uninstall and the control window (§7.1) |
+| `sys` | Paths, wall clock, theme, message boxes, shell |
 
-**Threads:** UI (frontend + runtime + core), acquisition (runtime), and audio (while sounding). Memory rule: render targets exist only while a window is visible; SAPI lives only on the audio thread.
+**Not built yet (v1):** the Settings window (then the menu shrinks to Settings… / Open alarm log / Exit), motion (DESIGN.md "Motion"), the Windows 10 pass.
+
+**Threads:** UI (frontend + runtime + core), acquisition (runtime), and audio (only while sounding). Memory rule: no render target is kept between frames; SAPI lives only on the audio thread.
 
 ### 7.1 Program lifecycle (Spec §4)
 
@@ -331,11 +330,11 @@ The same split as sources: **what** to do is portable and tested everywhere; **h
 **`meltalarm-lifecycle` (portable, std only, no OS calls):**
 
 ```rust
-pub enum Policy { SelfManaged, PackageManaged }      // Spec L1; chosen by the frontend (Windows / Linux)
-pub enum Flag { None, Portable, Uninstall }           // command line
-pub struct Copy { pub path: PathBuf, pub version: Version }
-pub struct Facts { pub policy: Policy, pub flag: Flag, pub this: Copy,
-                   pub installed: Option<Copy>, pub same_file_running: bool }
+pub enum Policy { SelfManaged, PackageManaged }          // Spec L1; chosen by the frontend (Windows / Linux)
+pub enum Flag { None, Portable, Install, Uninstall }      // command line
+pub enum Instance { None, SameFile, OtherFile }           // a MeltAlarm already running, relative to this file
+pub struct Facts { pub policy: Policy, pub flag: Flag, pub this_version: Version, pub this_is_installed: bool,
+                   pub installed: Option<Version>, pub running: Instance }
 pub enum Launch {
     Monitor { portable: bool },            // normal start; portable → no autostart, "Install…" offered
     HandOff,                               // L6: bring the running instance forward, exit
@@ -343,71 +342,72 @@ pub enum Launch {
     OfferUpdate { from: Version, to: Version },
     OfferReplace { from: Version, to: Version },  // downgrade = rollback
     StartInstalled,                        // same version: hand off to the installed copy
-    Uninstall,                             // §4.7
+    Uninstall, NotInstalled,               // §4.7
 }
 pub fn decide(f: &Facts) -> Launch;       // Spec §4.4, table-driven tests; PackageManaged → Monitor/HandOff only
 
-pub trait Step { fn name(&self) -> &str; fn apply(&mut self) -> Result<(), String>; fn undo(&mut self); }
-pub fn run_atomic(steps: Vec<Box<dyn Step>>) -> Result<(), Failed>;   // install/update: undo done steps in reverse
-pub fn run_best_effort(steps: Vec<Box<dyn Step>>) -> Vec<Failed>;     // uninstall: keep going, report leftovers
+pub trait Step { fn name(&self) -> String; fn apply(&mut self) -> Result<(), String>; fn undo(&mut self) {} }
+pub fn run_atomic(steps: &mut [Box<dyn Step>]) -> Result<(), Failed>;  // install/update: undo done steps in reverse
+pub fn run_best_effort(steps: &mut [Box<dyn Step>]) -> Vec<Failed>;    // uninstall: keep going, report leftovers
 
 pub trait Autostart { fn target(&self) -> Option<PathBuf>; fn set(&self, target: Option<&Path>) -> Result<(), String>; }
 pub trait Instances { fn running(&self) -> Option<Box<dyn Running>>; }
-pub trait Running { fn show(&self); fn alarm_active(&self) -> Option<bool>; fn stop(&self, grace: Duration) -> Result<(), String>; }
+pub trait Running { fn path(&self) -> Option<PathBuf>; fn show(&self); fn alarm_active(&self) -> Option<bool>;
+                    fn stop(&self, grace: Duration) -> Result<(), String>; }
 ```
 
 - **Plans** (ordered step lists) are built by the frontend from its own `Step`s; the runner, the ordering rules and the rollback are shared.
-- **Log lines:** `core::LogEvent` gains `Installed { version, autostart }` and `Updated { from, to, downgrade }`; the gaps use the existing `MonitoringStopped`. A process that never starts monitoring (installer, `--uninstall`) writes the same file through `runtime::LogSink`.
-- **Version:** `CARGO_PKG_VERSION`, also embedded as the exe's VERSIONINFO so the installed copy's version is read from the file itself, without running it.
+- **Log lines:** `LogEvent::Installed`, `Updated` and `MonitoringStopped` (the gap). A process that never starts monitoring (installer, `--uninstall`) writes the same file through `runtime::LogSink`.
+- **Version:** `CARGO_PKG_VERSION`, also embedded as the exe's VERSIONINFO (by `build.rs`) so the installed copy's version is read from the file itself, without running it.
 
 **Windows backend (`meltalarm-win::lifecycle`, `Policy::SelfManaged`):**
 
 | Piece | Implementation |
 |---|---|
-| Installed copy | `FOLDERID_ProgramFilesX64\MeltAlarm\meltalarm.exe`; version via `GetFileVersionInfoW` |
-| Same file? | Final paths (`canonicalize`, i.e. `GetFinalPathNameByHandle`), so case, 8.3 names and links don't matter |
-| Install plan | StopRunning → CopyProgram (write `meltalarm.exe.new`, rename into place) → StartMenuShortcut (`IShellLinkW`, `FOLDERID_CommonPrograms`) → AppsEntry (`HKLM\…\Uninstall\MeltAlarm`: name, version, publisher, icon, size, `UninstallString = "…\meltalarm.exe" --uninstall`) → Autostart (if chosen) → start the installed copy |
-| Update plan | AlarmGate (`Running::alarm_active`, refuse if `Some(true)`) → StopRunning → ReplaceProgram (rename current → `meltalarm.exe.old`, copy the new file in; undo restores `.old`) → AppsEntry version → start. The next start of the installed copy deletes `.old`. |
-| Uninstall plan | StopRunning → Autostart off → shortcut → AppsEntry → program folder → data folders (if asked). The uninstaller *is* the installed exe: it renames itself out of the folder (allowed for a running image on the same volume), marks that file `MoveFileExW(DELAY_UNTIL_REBOOT)`, and removes the now-empty folder. |
-| Autostart | Existing Task Scheduler XML, target = the installed exe only |
-| Instances | Single-instance mutex (as today). The hidden main window (class `MeltAlarmMain`; simulated builds `MeltAlarmSimMain`) doubles as the **control window**: the registered message `MeltAlarm.Control` with SHOW / ALARM? / QUIT via `SendMessageTimeoutW`. UIPI lets only elevated processes send it. `stop` = QUIT, wait on the process handle for 5 s, then `TerminateProcess`; v0.x has the same window class but not the message, so it is found and terminated after the grace period. Instances in other sessions keep running old code until they restart. |
+| Installed copy | `FOLDERID_ProgramFiles\MeltAlarm\meltalarm.exe`; version via `GetFileVersionInfoW` |
+| Same file? | Final paths (`canonicalize`), so case, 8.3 names and links don't matter |
+| Alarm gate | Before install or update: `Running::alarm_active() == Some(true)` refuses ("A cable alarm is active…") |
+| Install plan | StopRunning → PlaceProgram (write `meltalarm.exe.new`, rename into place; an existing copy is kept as `.old` until done) → Shortcut (`IShellLinkW`, `FOLDERID_CommonPrograms`) → AppsEntry (`HKLM\…\Uninstall\MeltAlarm`: name, version, publisher, icon, size, `UninstallString = "…\meltalarm.exe" --uninstall`) → Startup (task + the stored setting, together). Then the installed copy is started with `--installed`. |
+| Update plan | StopRunning → PlaceProgram → AppsEntry version → start. The next start of the installed copy deletes `.old`. |
+| Uninstall plan | StopRunning → task off → shortcut → AppsEntry → program folder → data folders (if asked). The uninstaller *is* the installed exe: it renames itself out of the folder (allowed for a running image on the same volume), marks that file `MoveFileExW(DELAY_UNTIL_REBOOT)`, and removes the folder. |
+| Autostart | Task Scheduler XML via `schtasks.exe`, target = the installed exe only, "highest privileges" at logon |
+| Instances | Single-instance mutex. The hidden main window (class `MeltAlarmMain`; simulated builds `MeltAlarmSimMain`) doubles as the **control window**: the registered message `MeltAlarm.Control` with SHOW / ALARM / QUIT via `SendMessageTimeoutW`. UIPI lets only elevated processes send it. `stop` = QUIT, wait on the process handle for 5 s, then `TerminateProcess`. |
 | Elevation | All of it runs in the already-elevated process (manifest), so Program Files and HKLM need no extra prompt. |
-| Flags | `--portable` (dev, CI), `--install` (tray *Install…* spawns this), `--uninstall` (tray *Uninstall…* and Installed apps), `--installed` (set by the installer: show the pin-the-icon hint once). `simulate` builds skip lifecycle entirely. |
-| Log | The installer process writes STOPPED (if it closed a running instance) and INSTALL after success, through `runtime::LogSink`. |
+| Flags | `--portable` (dev, CI), `--install` (tray *Install…* spawns this), `--uninstall` (tray *Uninstall…* and Installed apps), `--installed` (set by the installer: show the pin-the-icon hint once). `simulate` builds skip the lifecycle entirely. |
 
 **Linux backend (next iteration, `Policy::PackageManaged`):** no `Step`s at all: the package installs the binary, the `.desktop` file and the udev rule. `Autostart` = an XDG autostart entry pointing to the packaged binary; `Instances` = a D-Bus name or a socket in `$XDG_RUNTIME_DIR`. `decide` then only ever returns `Monitor { portable: false }` or `HandOff`.
 
----
-
 ### 7.2 Floating monitor (Spec §7.4)
 
-- **Core supplies the words, the frontend the geometry.** `ConnectorView` carries `status_text` (`OK` / `Caution` / `ALARM` / `No data`, one vocabulary for every layout), `summary` and `summary_level` for the compact layout (D8). Where a view sits is frontend state (D14).
-- **Placement file** `window.toml` in the config folder, owned by `meltalarm-win` (`placement` module): per `ConnectorKey`: floating, display id, position in DIPs relative to that display's work area, layout, a scale per layout. Written on every change (end of a drag or scale, layout switch, ×), read at start. Unknown or broken lines are ignored.
+- **Core supplies the words, the frontend the geometry.** `ConnectorView` carries `status_text`, `summary` and `summary_level` for the compact layout (D8). Where a view sits is frontend state (D14).
+- **Placement file** `window.toml` in the config folder, owned by the `placement` module: per `ConnectorKey`: floating, display id, position in DIPs relative to that display's work area, layout, a scale per layout. Written on every change (end of a drag or scale, layout switch, ×), read at start. Unknown or broken lines and unknown connectors are ignored.
 - **Display identity:** the monitor's device interface name (`EnumDisplayDevicesW(…, EDD_GET_DEVICE_INTERFACE_NAME)`), stable across reboots, unlike `\\.\DISPLAYn`. Missing → the primary display. Always clamped fully inside a work area.
-- **Window:** layered, `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`; `WM_MOUSEACTIVATE → MA_NOACTIVATE` (as the overlay). Drawn with `gfx.present` at `dpi × scale`, reusing the popup's drawing code for *Full*. Move and scale use our own mouse capture, not the system move/size loop: the loop would activate the window and can't keep the aspect ratio. Hit zones: a 6 DIP edge band scales; the ×, tab and grip are buttons; everything else moves. Hover by `TrackMouseEvent`.
-- **Reconcile:** a floating window exists iff its placement says floating, the connector is tracked, and the connector is in the view. The popup and the floating view of one connector are mutually exclusive. The tray click is routed to *locate* when floating.
+- **Window:** layered, `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`; `WM_MOUSEACTIVATE → MA_NOACTIVATE` (as the notch). Drawn with `gfx.present` at `dpi × scale`, using the `card` module for *Full*. Move and scale use our own mouse capture, not the system move/size loop: the loop would activate the window and can't keep the aspect ratio. Hit zones: a 6 DIP edge band scales; the ×, tab and grip are buttons; everything else moves. While scaling, every redraw (the 1 Hz data update too) uses the scale being dragged to, anchored at the opposite corner. Hover by `TrackMouseEvent`.
+- **Reconcile:** see §7. The flyout and the floating view of one connector are mutually exclusive; a tray click on a floating connector *locates* it.
 - **Tear-off:** a press on the flyout's header hides the flyout, creates the floating view at the same spot and hands it the drag (capture moves to the new window).
-- **Footprint:** no render target is kept between frames (as today). Measured 13–15 MB private with a floating view, the same as an open flyout: the Direct2D/DirectWrite stack, loaded on the first text draw. Target ≤ 20 MB and flat (Spec §10).
+- **Footprint:** measured 13–15 MB private with a floating view, the same as an open flyout: the Direct2D/DirectWrite stack, loaded on the first text draw. Target ≤ 20 MB and flat (Spec §10).
+
+---
 
 ## 8. Key flows
 
 ```
 Launch:   main → lifecycle::decide(facts) → Monitor → Startup below | HandOff → Running::show → exit
           | Offer* → dialog → run_atomic(plan) → start installed copy → exit | Uninstall → run_best_effort → exit
-Startup:  main → single instance → Runtime::start (settings loaded) → acquisition discovers every 2 s
+Startup:  main → single instance → Runtime::start (settings + state loaded) → acquisition discovers every 2 s
           ├─ found (answered, incl. handshake) → SourceConnected → first run picks tracked connectors → tray icons
           ├─ present, silent → SourcePending → hollow "connecting…" icon; retried forever; notice + log after 2 min
           ├─ unusable (lock inaccessible) → Lifecycle::DiscoveryFailed → message → exit
           └─ no supported device for 2 min → Lifecycle::DiscoveryFailed → message "only MSI MPG Ai1300TS/Ai1600TS…" → exit
 Tick:     acquisition poll → channel + waker → pump → core.handle(Report) → view → reconcile (≈1 ms)
-Alarm:    guard overload or verdict ≠ Normal → core Active → view.alarm + view.audio → overlay shown, player
-          started, hotkey registered; Output.log = [OVERLOAD | PSU ALARM, RAW] → sink; note + alarm_open → state.toml
+Alarm:    guard overload or verdict ≠ Normal → Phase::Active → view.alarm + view.audio → notch shown, player
+          started, hotkey registered; Output.log = [OVERLOAD | PSU ALARM, PSU RAW] → sink; note + alarm_open → state.toml
 Caution:  guard caution qualifies (or NO DATA after data, or a new fault) → view.caution{chime+1} → strip on every
           monitor + one chime → wake at +10 s → strip gone; note → state.toml
-Advisory: guard uneven load qualifies → view.notice{silent, connector} → tray balloon (Windows holds it in games)
-Restart:  state.toml has alarm_open → core.restore → notice "Last session ended during a cable alarm" → cleared
+Advisory: guard uneven load qualifies → view.notice{silent, connector} → tray notification (Windows holds it in games)
+Restart:  state.toml has alarm_open → core.restore → notice "Last session ended during a cable alarm" → flag cleared
 Snooze:   click/hotkey → runtime.user(Snooze) → Snoozed{+30 s}, next_wake → view without alarm/audio
-          → wake: still ≠ Normal → Active again; escalation on any tick → Active immediately
+          → wake: still active → Active again; escalation on any tick → Active immediately
 Clear:    no cause left (guard: every wire < rating; device: Normal) → Cleared{5 s} (green notch, audio stops) → wake → Idle
 Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "cannot confirm"
 ```
@@ -417,15 +417,15 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
 ## 9. Read-only contract — enforcement (Q1)
 
 1. **Per source**, a closed request enum and a single private packet builder. A unit test enumerates every variant. For MSI that is exactly 9 packets: `[00, 51, reg, 0…]` with reg ∈ {10, 11, 12, 13, C0, C1, E0, E1}, plus the connect handshake `[00, FA, 51, 0…]`.
-2. **Workspace-wide** `clippy.toml` `disallowed-methods`:
+2. **Workspace-wide** `clippy.toml` `disallowed-methods`, every hidapi call that sends bytes to a device:
    - `hidapi::HidDevice::write`
-   - `send_feature_report`
-   - `get_feature_report`
    - `send_output_report`
+   - `send_feature_report`
+   - `get_feature_report` (its request also travels to the device)
 3. Exactly one `#[allow(clippy::disallowed_methods)]` per source crate, at its `transport` write.
-4. CI counts those `#[allow]`s and fails if they don't equal the number of source crates.
+4. *Planned with CI (v1):* CI counts those `#[allow]`s and fails if they don't equal the number of hardware source crates.
 5. No frontend or runtime crate depends on `hidapi` directly. Only `source-api` (the context) and source crates do.
-6. `psu-probe` uses `source-msi`'s public API only.
+6. `psu-probe` (v1) uses `source-msi`'s public API only.
 
 ---
 
@@ -436,43 +436,46 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
 | Failure | Effect |
 |---|---|
 | Source error | The tick is unhealthy (a view change, not a crash) |
-| Acquisition panic | `Fatal` → logged `MONITORING STOPPED` + TaskDialog |
-| Audio or voice failure | Overlay still shown; logged once |
-| Overlay failure | Audio still plays |
-| Autostart failure | The menu item shows unchecked, with a note |
-| Install / update step failure | Done steps undone in reverse; error dialog names the step; this copy runs portable (install) or the previous version is restarted (update) |
+| Acquisition panic | `Fatal` → logged `STOPPED` + message |
+| Audio or voice failure | The notch is still shown |
+| Notch failure | Audio still plays |
+| Autostart failure | The menu item shows the real state; a warning is logged |
+| File write failure (settings, state, placement, log) | Ignored; monitoring continues |
+| Install / update step failure | Done steps undone in reverse; error dialog names the step; this copy runs portable (install) or the previous version keeps running (update) |
 | UI thread panic | Panic hook logs the same line |
 
 **Testing:**
-- `model`/`core`: table-driven synthetic feeds for every Spec §6/§8/§9 rule, including sources with missing capabilities (e.g. no `cutoff_after` → no countdown).
-- `source-msi`: golden frames from the reference captures (serial scrubbed), plus the fake `Transport` (foreign frames, stale same-register frames, busy, timeout, disconnect — F17).
-- `runtime`: fake drivers (scripted discovery and failures) and a temp-dir store and log.
-- `lifecycle`: the Spec §4.4 table for both policies, version ordering, and rollback order with fake `Step`s that fail at each position. Runs on Linux CI too.
-- `win`: file-replacement step (fresh, update, failure rollback) in temp folders. Run with `--features simulate`: the real manifest makes the test binary require elevation.
-- **Simulated source** (cargo feature `simulate`, never in release builds): a `Driver` that replays a scenario file. The UI and every alarm path can be exercised with **no device traffic at all**. It is also a second implementation of the source API, which proves the abstraction.
-- Acceptance T1–T10 run manually.
+- `model`/`core`: table-driven synthetic feeds for every Spec §6/§8/§9 rule, including sources with missing capabilities (e.g. no `cutoff_after` → no countdown); the cable guard (T22); the texts users see.
+- `source-msi`: golden frames from the reference captures (serial scrubbed), plus the fake `Transport` (foreign frames, stale same-register frames, busy, timeout — F17).
+- `runtime`: fake drivers through the real acquisition thread, temp-dir files.
+- `lifecycle`: the Spec §4.4 table for both policies, version ordering, and rollback order with fake `Step`s that fail at each position. Portable, so it runs on Linux CI too.
+- `win`: the program file replacement step (fresh, update, failure rollback) in temp folders, and the placement file format. Run with `--features simulate`: the real manifest makes the test binary require elevation.
+- **On screen:** the `simulate` build (`meltalarm-source-sim`) exercises every surface with no device traffic. Visual changes are checked there at real size (DESIGN.md).
+- Acceptance T1–T28 (Spec §11) run manually.
 
 **Build:**
 - `x86_64-pc-windows-msvc`, static CRT.
-- `build.rs` embeds the manifest (`requireAdministrator` because of the MSI mutex, PerMonitorV2, Common Controls v6, Windows 10/11), the icon and version info.
-- **CI (v1):** Windows (fmt, clippy, test, read-only check, release + SHA256SUMS), **plus Linux** (`cargo test` for model, core, source-api, source-msi, runtime, lifecycle). That keeps the portable crates portable before any Linux frontend exists.
+- `build.rs` embeds the manifest (`requireAdministrator` because of the MSI mutex, `asInvoker` for `simulate`; PerMonitorV2, Common Controls v6, Windows 10/11), the app icon (drawn per size with `paint.rs`) and VERSIONINFO.
+- *Planned (v1):* CI on Windows (fmt, clippy for both builds, tests, the read-only count, release + SHA256SUMS) **plus Linux** (`cargo test` for model, core, source-api, source-msi, source-sim, runtime, lifecycle), which keeps the portable crates portable before any Linux frontend exists.
 - **Repo:** MIT; `docs/`; the research material (PSU.dll, raw captures, original notes) stays local and git-ignored.
 
 ---
 
-## 11. Extension paths (designed-for, not built)
+## 11. Extension paths (designed for, not built)
 
 ### 11.1 Linux frontend
-- **Reused unchanged:** model, core, source-api, source-msi, runtime.
+- **Reused unchanged:** model, core, source-api, source-msi, source-sim, runtime, lifecycle (`Policy::PackageManaged`).
 - **New crate:**
 
   | Area | Plan |
   |---|---|
   | Tray | StatusNotifierItem (`ksni`) |
   | Alarm | Critical desktop notification; layer-shell overlay where the compositor supports it (KDE, wlroots; not GNOME) |
+  | Caution | A normal-urgency notification with the chime |
   | Sound and voice | PipeWire + speech-dispatcher, executing the same `AudioScript` |
-  | Autostart | XDG autostart entry (`~/.config/autostart`) via `lifecycle::Autostart`; works on every desktop, and systemd generates a unit from it where used |
-  | Install, update, uninstall | Distro package / AppImage (`lifecycle::Policy::PackageManaged`, Spec L1); the package ships the udev rule |
+  | Bars | The same knee scale (`core::bar_share`) and texts; its own drawing |
+  | Autostart | XDG autostart entry (`~/.config/autostart`) via `lifecycle::Autostart` |
+  | Install, update, uninstall | Distro package / AppImage (Spec L1); the package ships the udev rule |
   | Single instance | `lifecycle::Instances` over D-Bus or a `$XDG_RUNTIME_DIR` socket |
   | Device access | udev rule, **no root** |
   | Paths | XDG |
@@ -482,7 +485,11 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
 ### 11.2 A new sensing device
 1. Add a `meltalarm-source-<vendor>` crate implementing `Driver`/`Source` under the §4.2 rules, with golden frames.
 2. Add it to the frontend's driver list.
-3. Nothing else changes. A device **without** a verdict of its own still gets the full ladder from the cable guard (D15); one with a verdict gets both judges.
+3. Nothing else changes. A device **without** a verdict of its own still gets the full ladder from the cable guard (D15); one with a verdict gets both judges. Its protection's name comes from `protection_name`.
+
+Known limits for that day, deliberately not built yet (YAGNI):
+- Core holds **one source at a time**; a PC with two sensing devices (e.g. a PSU and a GPU that both measure) would need connectors from several sources in one view.
+- The texts say "PSU" for the device ("PSU status", "reported by the PSU"). A GPU-side source would need the device's noun in `SourceInfo`.
 
 ---
 
@@ -490,73 +497,59 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
 
 | # | Decision | Alternatives rejected | Why |
 |---|---|---|---|
-| D1 | Sans-IO `core` hosted by a portable `runtime` on the frontend's UI thread | A dedicated engine thread; core inside the frontend (v1) | Deterministic and testable; one fewer thread; the same host serves Windows and Linux |
-| D2 | Vendor-neutral model + compile-time `Driver`/`Source` traits | MSI types in core (v1); runtime plugins | Q4 without a rewrite. Plugins would load third-party code into an elevated process (Q1). |
-| D3 | *(Revised 2026-10-01 by D15.)* The device verdict was the only alarm authority | — | Research showed the PSU's policy is too slow for the contact (Spec F20, F21) |
-| D4 | Declarative ViewModel; frontends reconcile | Imperative effect commands | No drift between "should" and "is" (overlay, audio, hotkey, tray). Idempotent after any hiccup. |
+| D1 | Sans-IO `core` hosted by a portable `runtime` on the frontend's UI thread | A dedicated engine thread; core inside the frontend | Deterministic and testable; one fewer thread; the same host serves Windows and Linux |
+| D2 | Vendor-neutral model + compile-time `Driver`/`Source` traits | MSI types in core; runtime plugins | Q4 without a rewrite. Plugins would load third-party code into an elevated process (Q1). |
+| D3 | *(Superseded by D15.)* The device verdict was the only alarm authority | — | Research showed the PSU's policy is too slow for the contact (Spec F20, F21) |
+| D4 | Declarative ViewModel; frontends reconcile | Imperative effect commands | No drift between "should" and "is" (notch, audio, hotkey, tray). Idempotent after any hiccup. |
 | D5 | Native frontend per OS | Cross-platform UI toolkit | The hard parts (tray, overlay over games, autostart, audio) are OS-specific anyway; toolkits cost the footprint (Q3). |
 | D6 | One elevated process on Windows | Service + user helper | Admin is sufficient (F3); half the moving parts |
 | D7 | Direct2D/DirectWrite in software mode | GPU rendering | No GPU driver in the process; tiny surfaces |
 | D8 | User-facing text built in `core` | Text per frontend | One tested source of wording across OSes and channels (notch, voice, notification) |
-| D9 | MSI handshake sent on **every connect**, never per tick | Only after reads time out ("minimal touch") | Mirrors the vendor's own clients exactly (deterministic, independent of what other software did since boot); a failure-driven path would be a rarely-exercised branch where bugs hide. Repeated handshakes are routine in MSI's ecosystem (MSI Center + Afterburner). |
-| D10 | A present but silent device is retried forever; exit only when no supported device exists | Give up after a timeout | A safety monitor must not quit because the PSU is slow to answer; "unsupported hardware" (exit) and "not answering yet" (wait) are different situations. |
-| D11 | Windows: one self-installing exe | MSI/WiX or Inno Setup installer; portable only | No second toolchain; one file to verify; an installer would still need custom steps for the elevated task; unsigned installers get harsher SmartScreen treatment. Portable-only broke autostart and left no uninstall. |
-| D12 | Lifecycle = portable decisions (`meltalarm-lifecycle`) + per-OS steps; Linux delegates to the package manager | Lifecycle code only inside `meltalarm-win`; self-install on Linux too | Same pattern as sources; the decision table is tested on Linux CI; Linux users expect packages; nothing Windows-specific reaches the portable crates. |
-| D13 | Autostart only ever targets the protected installed copy | Task follows `current_exe()` (v0) | v0 let a user-writable file start elevated at logon (privilege escalation), and let dev builds repoint the user's task. |
-| D14 | Window placement is frontend state in its own file (`window.toml`) | In core `Settings` | Where a window sits is a per-OS, per-display detail; core decides what is shown, not where. Keeps `settings.toml` portable and meaningful on Linux. |
-| D15 | **One alarm, two judges:** the cable guard (our limits from the connector's physics) **or** the device's verdict | Device verdict only (D3); a thermal I²t model; the research brief's rules as written | The PSU's 20 s + 180 s is too slow (F21). An I²t model at 1 Hz is either slow or a disguised filter and hard to explain in a log line. The brief's rules restart on every dip, so noise around 10.5 A never alarms; hysteresis fixes it. Vendor-neutral: works for sources without a verdict. |
+| D9 | MSI handshake sent on **every connect**, never per tick | Only after reads time out ("minimal touch") | Mirrors the vendor's own clients exactly; a failure-driven path would be a rarely-exercised branch where bugs hide. Repeated handshakes are routine in MSI's ecosystem. |
+| D10 | A present but silent device is retried forever; exit only when no supported device exists | Give up after a timeout | A safety monitor must not quit because the PSU is slow to answer. |
+| D11 | Windows: one self-installing exe | MSI/WiX or Inno Setup installer; portable only | No second toolchain; one file to verify; an installer would still need custom steps for the elevated task. |
+| D12 | Lifecycle = portable decisions (`meltalarm-lifecycle`) + per-OS steps; Linux delegates to the package manager | Lifecycle code only inside `meltalarm-win`; self-install on Linux too | Same pattern as sources; the decision table is tested on Linux CI; Linux users expect packages. |
+| D13 | Autostart only ever targets the protected installed copy | Task follows `current_exe()` | Otherwise a user-writable file starts elevated at logon (privilege escalation). |
+| D14 | Window placement is frontend state in its own file (`window.toml`) | In core `Settings` | Where a window sits is a per-OS, per-display detail; core decides what is shown, not where. |
+| D15 | **One alarm, two judges:** the cable guard (our limits from the connector's physics) **or** the device's verdict | Device verdict only (D3); a thermal I²t model; the research brief's rules as written | The PSU's 20 s + 180 s is too slow (F21). An I²t model at 1 Hz is either slow or a disguised filter and hard to explain in a log line. The brief's rules restart on every dip; hysteresis fixes it. Works for sources without a verdict. |
 | D16 | Cable limits are core constants (versioned "limits v1"), overridable only in `settings.toml`, all or nothing | A Settings-window control; limits from the device (`C0`) | The defaults come from physics, not taste; a control mostly invites loosening a safety alarm. Only overrides are written, so default improvements reach everyone. |
-| D17 | The alert ladder is declarative: `ViewModel.alarm`, `.caution` (with a chime id), `.notice` (silent or warning); cable notes and "alarm open" in `CoreState` | Imperative "play chime / show toast" commands | Same as D4: idempotent reconciliation; the frontend can't drift from core's decision. Notes persist because the PSU's power cut also kills MeltAlarm. |
+| D17 | The alert ladder is declarative: `ViewModel.alarm`, `.caution` (with a chime id), `.notice`; cable notes and "alarm open" in `CoreState` | Imperative "play chime / show toast" commands | Same as D4. Notes persist because the PSU's power cut also kills MeltAlarm. |
+| D18 | **Vendor words come from the source.** Core's texts never name a vendor feature or a vendor's limit; the source supplies `protection_name` and the limits it enforces | MSI wording in core | A second vendor must not need core changes (Q4). |
+| D19 | **Presentation rules shared by frontends live in core** (the knee scale), geometry and drawing in the frontend | The rule duplicated per frontend | One tested rule; Linux draws the same bars without re-deriving them. |
+| D20 | **Modules follow the spec's sections** (core: `levels`, `guard`, `alarm`, `ladder`, `view`, `text`; win: one module per surface, shared `card`, `palette`, `edge`) | Files grown by history | A spec change lands in one place; reviewers find the code for a spec section by name. |
 
 ---
 
-## 13. Risks and spikes
+## 13. Risks
 
 | # | Risk | When | Fallback |
 |---|---|---|---|
-| R1 | Acrylic behind software-D2D content | v1 | Solid (the v0 default) |
-| R2 | Overlay not visible over some borderless or flip-model games, or steals focus | v0 test with 2–3 games | Audio is guaranteed; document the titles |
-| R3 | UIPI blocks tray messages to the elevated process | v0, first thing | `ChangeWindowMessageFilterEx` |
-| R4 | Idle memory above 5 MB after windows close | v0 measure | Release resources; trim the working set |
-| R5 | Linux HID framing (64/65 bytes) | Linux iteration | Parser already tolerant; verify with the probe |
-| R6 | Defender/SmartScreen heuristics flag an unsigned exe that copies itself to Program Files and creates an elevated logon task | v1, test with Defender on | Plain dialog wording, SHA256SUMS; report false positives to Microsoft; code signing later |
-| R7 | Self-removal of the running installed exe (rename out of the folder) | v1 spike | Mark the whole folder `DELAY_UNTIL_REBOOT` |
+| R1 | Notch or strip not visible over some borderless or flip-model games, or steals focus | T23, real games | Audio is guaranteed; document the titles |
+| R2 | Idle memory above 5 MB after windows close | T9 | Release resources; trim the working set |
+| R3 | Linux HID framing (64/65 bytes) | Linux iteration | Parser already tolerant; verify with the probe |
+| R4 | Defender/SmartScreen flags an unsigned exe that copies itself to Program Files and creates an elevated logon task | v1, test with Defender on | Plain dialog wording, SHA256SUMS; report false positives to Microsoft; code signing later |
+| R5 | `E0` is a held peak, not an instantaneous value (Spec §12) | The read-only probe, with the user's go-ahead | Revalidate the one-reading 15 A rule and the persistence rules |
+| R6 | The cable-limit defaults raise false alarms in real games | T28 | A later limits version; overrides for advanced users meanwhile |
 
 ---
 
-## 14. Milestones
+## 14. Status and roadmap
 
-**v0 — tonight** (in order; each step leaves something runnable):
-1. `git init`, workspace skeleton, `.gitignore` (research material moved to the ignored `research/`), clippy read-only lint.
-2. `model` + `source-api` + `source-msi` (port the verified probe code, golden frames).
-3. `core`: levels, attribution, health, alarm phases, snooze, clear, log events, ViewModel and text, with tests for the safety-relevant rules.
-4. `runtime`: acquisition, discovery, reconnect, settings store, log sink.
-5. `win`: tray + glyph + menu (settings as checkmarks) → **first live run** (R3, R4).
-6. `win`: popup (solid).
-7. `win`: overlay + audio/voice + hotkey + Test alarm → **alarm verified via Test alarm** (R2).
-8. `win`: autostart task, power events → install for daily use.
+**Done** (0.1–0.3):
+- the read-only MSI source with the connect handshake; coexistence with MSI Center, Afterburner and HWiNFO
+- core, runtime, tray, flyout, floating view, notch, sound and voice, snooze and test
+- the program lifecycle: install, update, uninstall, autostart
+- the cable guard and the alert ladder: caution strip and chime, advisories, cable notes
+- the simulator crate
 
-**v0.1 — fix after the first cold boot (2026-09-28, F19):**
-- MSI connect handshake + `Request` enum (9-packet contract test).
-- `Discovery::NotReady`; identification by USB ID, with the model string display-only.
-- Runtime: 2 s discovery loop, retried forever when present; exit only if absent for 2 min; startup failures logged.
-- Core: `Connecting` health, `NOT CONNECTED` / `CONNECTED` log events, one-shot `notice`.
-- Win: placeholder "connecting…" tray icon and a notice balloon; simulated `silent` scenario for T13.
-- Acceptance: T11 (cold boot, no MSI software), T12, T13.
+**v1 — GitHub release:**
+- Settings window (DESIGN.md "Settings"); the menu shrinks
+- motion (DESIGN.md "Motion"); a Windows 10 pass
+- `psu-probe`; `docs/PROTOCOL.md`; README (with the GPU power cable / 12V-2x6 / 16-pin bridge and the `limit_*` keys)
+- CI (Windows + Linux crates), release with SHA256SUMS
+- acceptance: T3 coexistence run, T14–T21 lifecycle and floating, T23–T28 on real games
 
-**v1 — GitHub:**
-- settings window
-- acrylic/Mica
-- Win10 pass
-- simulated source + scenario files
-- `psu-probe` tool
-- `docs/PROTOCOL.md`, README
-- CI (Windows + Linux crates), release, coexistence run (T3)
-- floating monitor (§7.2): Spec §7.4, acceptance T18–T21
-- cable guard and alert ladder (v0.3): Spec §6, §8, acceptance T22–T28
-- program lifecycle (§7.1): `meltalarm-lifecycle`, Windows backend, VERSIONINFO, control window; acceptance T14–T17. Migrates the reference PC from the hand-copied `%LOCALAPPDATA%\Programs\MeltAlarm`.
-
-**Next iteration:** Linux frontend (§11.1); new sources on demand (§11.2), plus the local-alarm policy decision for sources without a verdict.
+**Next iteration:** the Linux frontend (§11.1); new sources on demand (§11.2).
 
 ---
 
@@ -564,13 +557,25 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
 
 | Criterion | Assessment |
 |---|---|
-| Consistent with the spec | Every Spec §5–§9 rule has exactly one home (source-msi: §5; core: §6, §8, §9; runtime: §5.4 reconnect/watchdog, §9 file; win: §4, §7, §8.2/8.3 rendering and playback). Spec facts F3, F13, F17 are reflected in lock, audio and transport. |
-| Single responsibility, clear boundaries | Each crate has one reason to change: vocabulary, decisions, device family, hosting, OS. |
+| Consistent with the spec | Every Spec §5–§9 rule has exactly one home (source-msi: §5; core: §6, §8, §9, by module; runtime: §5.4 reconnect/watchdog, §9 file; win: §4, §7, §8 rendering and playback). Spec facts F3, F13, F17 are reflected in lock, audio and transport. |
+| Single responsibility, clear boundaries | Each crate has one reason to change: vocabulary, decisions, device family, hosting, lifecycle, OS. Within core and win, modules follow spec sections and surfaces (D20). |
 | Dependency direction | Stable → volatile, verified in §2. No cycles. `core` has zero dependencies beyond `model`. |
-| Safety invariant is structural | Closed enums + single write site + lint + CI count + no `hidapi` outside sources (§9) |
-| Testability | Everything that decides is pure and clock-injected; every IO edge has a fake (Transport, Driver, Paths, wall clock). |
-| Extensibility without speculation | Only two seams (Source, Frontend), both driven by stated plans. No plugin system, no generic "sensor" beyond 12V-2x6's 6 wires, no local-alarm policy yet (YAGNI). |
-| Failure isolation | §10 table: every non-core failure degrades a channel, never monitoring or the alarm decision. |
-| Footprint | Two permanent threads, software rendering, resources scoped to visibility; the extra crates cost nothing at runtime. |
-| Delivery (tonight) | v0 steps need no v1-only parts. The seams add a few small traits, not frameworks. |
-| **Known trade-offs** | (1) Menu-based settings in v0. (2) Frontends must implement reconciliation correctly (mitigated: small and declarative). (3) `requireAdministrator` applies to the whole app because of the MSI source on Windows. (4) The cable limits are engineering defaults (Spec §8.7); the one-reading 15 A rule may need revalidation once `E0`'s nature is known (Spec §12). |
+| Safety invariant is structural | Closed enums + single write site + the full hidapi deny-list + no `hidapi` outside sources (§9). The CI count is still to come (v1). |
+| Testability | Everything that decides is pure and clock-injected; every IO edge has a fake (Transport, Driver, Paths, wall clock); the simulator covers the screens. |
+| Extensibility without speculation | Two seams (Source, Frontend), both driven by stated plans; vendor words from the source (D18). The known limits for a second device are listed (§11.2), not built. |
+| Failure isolation | §10: every non-core failure degrades a channel, never monitoring or the alarm decision. |
+| Footprint | Two permanent threads, software rendering, resources scoped to visibility. |
+| **Known trade-offs** | (1) Menu-based settings until v1. (2) Frontends must implement reconciliation correctly (mitigated: small and declarative). (3) `requireAdministrator` applies to the whole app because of the MSI mutex. (4) The cable limits are engineering defaults (Spec §8.7). |
+
+---
+
+## 16. Document history
+
+| Version | Date | Changes |
+|---|---|---|
+| 3 | 2026-10-01 | Rewritten to describe the system as built after the architecture review: core modules by spec section, the simulator crate, the Windows modules (`card`, `palette`, `edge`, `menu`), vendor words from the source (D18–D20), the full hidapi deny-list, status and roadmap |
+| 2.4 | 2026-10-01 | The cable guard (D15–D17), the alert ladder, cable notes and `state.toml` |
+| 2.3 | 2026-09-30 | Floating monitor (§7.2) |
+| 2.2 | 2026-09-28 | Program lifecycle split into a portable crate plus per-OS backends |
+| 2.1 | 2026-09-28 | Connect handshake, `Discovery::NotReady`, a startup that never gives up on a present device |
+| 2 | 2026-09-27 | Vendor-neutral model, portable runtime, sans-IO core |

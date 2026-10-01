@@ -8,6 +8,8 @@
 //! 5. Honor the vendor's coexistence locks.
 //! 6. Report anything unavailable as `None`, never as zero.
 //! 7. Ship golden-frame tests.
+//! 8. `discover` performs the vendor's complete connect sequence: `Found` means the device has
+//!    answered; present but silent is `NotReady`.
 
 pub use hidapi;
 use meltalarm_model::{Report, SourceInfo};
