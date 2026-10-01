@@ -127,7 +127,8 @@ impl Core {
                 let c = self.conns.first()?;
                 let mut v = self.alarm_for(c, now, true);
                 v.what = "Current imbalance · sample data".into();
-                v.numbers = "Lowest wire 2.1 A, the others 9.7–9.9 A. Imbalance 7.8 A.".into();
+                v.numbers = "Lowest wire 2.1 A, the others 9.7–9.9 A.
+Imbalance 7.8 A.".into();
                 v.bars = test_bars();
                 v.right_label = "POWER CUT IN".into();
                 v.right_value = "~3:00".into();
@@ -186,32 +187,46 @@ impl Core {
             (o.peak.0, a)
         });
         let our_line = ours.map(|(_, a)| format!("A wire carries {}, rated {}.", amps(a), amps(l.rating)));
-        let psu_numbers = |s: DeviceStatus| -> String {
+        // The notch has two lines for the numbers, one fact per line (DESIGN.md "Alarm overlay"): a
+        // sentence never wraps into the other, at any notch width. The PSU's limit comes last.
+        let psu_lines = |s: DeviceStatus| -> Vec<String> {
             if s == DeviceStatus::CriticalOverCurrent {
                 let (_, a) = c.eval.max.unwrap_or((0, 0.0));
-                let hard = p.and_then(|p| p.hard_wire_limit).map(|l| format!(" Hard PSU limit {}.", trim(l))).unwrap_or_default();
-                format!("Highest wire {}.{hard}", amps(a))
+                let mut v = vec![format!("Highest wire {}.", amps(a))];
+                v.extend(p.and_then(|p| p.hard_wire_limit).map(|l| format!("Hard PSU limit {}.", trim(l))));
+                v
             } else if s == DeviceStatus::Imbalance {
                 let (lo_i, lo) = c.eval.min.unwrap_or((0, 0.0));
                 let others: Vec<f32> = cv.wires.iter().enumerate().filter(|(i, _)| *i != lo_i).filter_map(|(_, w)| w.amps).collect();
                 let (omin, omax) = others.iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
                 let limit = p.and_then(|p| p.imbalance_limit).map(|l| format!(", PSU limit {}", amps(l))).unwrap_or_default();
+                let imbalance = format!("Imbalance {}{limit}.", amps(c.eval.imbalance.unwrap_or(0.0)));
                 if others.is_empty() {
-                    "Wire readings unavailable.".into()
+                    vec!["Wire readings unavailable.".into(), imbalance]
                 } else {
-                    format!("Lowest wire {}, the others {:.1}–{:.1} A. Imbalance {}{limit}.", amps(lo), omin, omax, amps(c.eval.imbalance.unwrap_or(0.0)))
+                    vec![format!("Lowest wire {}, the others {:.1}–{:.1} A.", amps(lo), omin, omax), imbalance]
                 }
             } else {
                 let (_, a) = c.eval.max.unwrap_or((0, 0.0));
                 let limit = p.and_then(|p| p.wire_limit).map(|l| format!(", PSU limit {}", amps(l))).unwrap_or_default();
-                format!("Highest wire {}{limit}.", amps(a))
+                vec![format!("Highest wire {}{limit}.", amps(a))]
             }
         };
         let source_word = if data_lost { "last PSU report" } else { "reported by the PSU" };
+        // The band already names a critical status; its line only says who reports it.
+        let what_of = |s: DeviceStatus| match s {
+            DeviceStatus::CriticalOverCurrent if data_lost => "Last PSU report".to_owned(),
+            DeviceStatus::CriticalOverCurrent => "Reported by the PSU".to_owned(),
+            _ => format!("{} · {source_word}", status_name(s)),
+        };
         let (what, numbers) = match (status, &our_line) {
-            (Some(s), Some(ours)) => (format!("{} · {source_word}", status_name(s)), format!("{} {ours}", psu_numbers(s))),
-            (Some(s), None) => (format!("{} · {source_word}", status_name(s)), psu_numbers(s)),
-            (None, Some(ours)) => ("Wire overload · measured by MeltAlarm".to_owned(), format!("{ours} The PSU hasn't raised an alarm yet.")),
+            // Both judges: the PSU's limit line, then ours.
+            (Some(s), Some(ours)) => (what_of(s), format!("{}
+{ours}", psu_lines(s).pop().unwrap_or_default())),
+            (Some(s), None) => (what_of(s), psu_lines(s).join("
+")),
+            (None, Some(ours)) => ("Wire overload · measured by MeltAlarm".to_owned(), format!("{ours}
+The PSU hasn't raised an alarm yet.")),
             (None, None) => (String::new(), String::new()),
         };
         let (right_label, right_value) = if critical {

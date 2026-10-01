@@ -1,6 +1,6 @@
 # MeltAlarm — Functional Specification
 
-**Status:** v2.8 · **Date:** 2026-10-01 · Companions: `DESIGN.md` (how it looks), `ARCHITECTURE.md` (how it is built) · Changes: §13
+**Status:** v2.9 · **Date:** 2026-10-01 · Companions: `DESIGN.md` (how it looks), `ARCHITECTURE.md` (how it is built) · Changes: §13
 
 **Supported hardware:**
 - MSI **MPG Ai1300TS** and **MPG Ai1600TS** PSUs, connected by USB.
@@ -499,9 +499,11 @@ Each (connector, cause) pair is tracked separately. The alarm lasts while any pa
 
      | Cause | What | Right-hand block |
      |---|---|---|
-     | MeltAlarm's overload | `Wire overload · measured by MeltAlarm`; `A wire carries 12.4 A, rated 9.5 A. The PSU hasn't raised an alarm yet.` | `HIGHEST WIRE` · `12.4 A` |
-     | the PSU's status | `Current imbalance · reported by the PSU`; the currents (`Lowest wire 2.1 A, the others 9.7–9.9 A. Imbalance 7.8 A, PSU limit 5.5 A.`) | `POWER CUT IN` · `~2:47` (§8.4), or `ANY SECOND` for status 3 |
-     | both on one cable | the PSU's line, then our wire line | the PSU's block |
+     | MeltAlarm's overload | `Wire overload · measured by MeltAlarm`; `A wire carries 12.4 A, rated 9.5 A.` / `The PSU hasn't raised an alarm yet.` | `HIGHEST WIRE` · `12.4 A` |
+     | the PSU's status | `Current imbalance · reported by the PSU`; the currents (`Lowest wire 2.1 A, the others 9.7–9.9 A.` / `Imbalance 7.8 A, PSU limit 5.5 A.`) | `POWER CUT IN` · `~2:47` (§8.4), or `ANY SECOND` for status 3 |
+     | both on one cable | the PSU's limit line, then our wire line | the PSU's block |
+
+     The numbers take at most two lines, one fact per line (`/` above), so no sentence wraps into the next at any notch width.
 
      The band names the cable (§7.0); for two cables in alarm, `GPU power cables 1 + 2`.
 
@@ -704,6 +706,7 @@ During a game Windows holds notifications back silently and shows them in the no
 
 | Version | Date | Changes |
 |---|---|---|
+| 2.9 | 2026-10-01 | The notch's numbers: at most two lines, one fact per line (§8.2) |
 | 2.8 | 2026-10-01 | Uninstall has one entry point, Installed apps; no *Uninstall…* in the menu or Settings (§4.7) |
 | 2.7 | 2026-10-01 | `Not connected` is a state on every surface: a cable without current is never `OK` (§6.7, §7.1); the short name `Cable 2` where space is tight (§7.0) |
 | 2.6 | 2026-10-01 | Clean-up: log examples match the real log lines, the PSU's protection is named by the source (§6.9), the full hidapi deny-list (§3), notch height, the update refusal text |

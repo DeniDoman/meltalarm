@@ -168,7 +168,8 @@ fn device_alarm_raises_overlay_audio_countdown_note_and_logs() {
     assert_eq!(a.headline, "GPU POWER CABLE OVERLOAD");
     assert_eq!(a.what, "Current imbalance · reported by the PSU");
     assert_eq!((a.right_label.as_str(), a.right_value.as_str()), ("POWER CUT IN", "~3:00"));
-    assert!(a.numbers.starts_with("Lowest wire 2.1 A, the others 9.7–9.9 A. Imbalance 7.8 A"), "{}", a.numbers);
+    assert_eq!(a.numbers, "Lowest wire 2.1 A, the others 9.7–9.9 A.
+Imbalance 7.8 A, PSU limit 5.5 A.");
     assert_eq!(a.connector, "GPU power cable");
     let audio = v.audio.expect("sound");
     assert!(matches!(audio.steps.last(), Some(AudioStep::Speak(t)) if t == "Warning. GPU power cable overload. Stop the game now."));
@@ -197,7 +198,8 @@ fn our_overload_alarms_without_the_psu_and_says_so() {
     let v = h.view();
     let a = v.alarm.expect("MeltAlarm's own alarm");
     assert_eq!(a.what, "Wire overload · measured by MeltAlarm");
-    assert_eq!(a.numbers, "A wire carries 12.6 A, rated 9.5 A. The PSU hasn't raised an alarm yet.");
+    assert_eq!(a.numbers, "A wire carries 12.6 A, rated 9.5 A.
+The PSU hasn't raised an alarm yet.");
     assert_eq!((a.right_label.as_str(), a.right_value.as_str()), ("HIGHEST WIRE", "12.6 A"));
     assert!(v.audio.is_some());
     let c = &v.connectors[0];
@@ -236,7 +238,8 @@ fn the_psu_joining_our_overload_escalates_a_snooze() {
     h.tick(pin1(16.0), [1, 0]);
     let a = h.view().alarm.expect("a new cause cancels the snooze");
     assert_eq!(a.what, "Over-current · reported by the PSU");
-    assert_eq!(a.numbers, "Highest wire 16.0 A, PSU limit 12.0 A. A wire carries 16.0 A, rated 9.5 A.");
+    assert_eq!(a.numbers, "Highest wire 16.0 A, PSU limit 12.0 A.
+A wire carries 16.0 A, rated 9.5 A.", "both judges: one fact per line");
 }
 
 #[test]

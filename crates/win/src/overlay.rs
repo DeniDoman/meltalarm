@@ -76,6 +76,8 @@ impl Overlay {
 }
 
 const BAND: f32 = 44.0;
+/// The widest the right-hand block (countdown, highest wire) may get, in DIP.
+const RIGHT_MAX: f32 = 140.0;
 
 fn height(gfx: &Gfx, a: &AlarmView, w: f32) -> f32 {
     let mut h = BAND + 16.0 + 34.0 + 3.0 + 20.0 + 14.0 + 1.0 + 14.0 + 50.0 + 18.0;
@@ -143,7 +145,11 @@ fn draw(p: &Painter, a: &AlarmView, w: f32, h: f32, hovered: bool, hint: bool) -
         let bx = x + i as f32 * 14.0;
         draw_cut_bar(p, bx, y + 1.0, 10.0, 48.0, wv.amps, a.bar_limit, a.bar_rating, (0x2A2A2C, 1.0), c, 1.0, 0x8C8C8C);
     }
-    let right_w = p.gfx().text_width(&a.right_value, num(36.0, 700)).max(p.gfx().text_width(&a.right_label, ui(11.0, 400)) + 10.0) + 4.0;
+    // The right block takes at most RIGHT_MAX; a word value ("ANY SECOND") shrinks to fit, so the
+    // text column keeps room for its lines even on the narrowest notch.
+    let full = p.gfx().text_width(&a.right_value, num(36.0, 700));
+    let value_font = num((36.0 * (RIGHT_MAX - 4.0) / full.max(1.0)).clamp(20.0, 36.0), 700);
+    let right_w = p.gfx().text_width(&a.right_value, value_font).max(p.gfx().text_width(&a.right_label, ui(11.0, 400)) + 10.0) + 4.0;
     let tx = x + 6.0 * 14.0 + 12.0;
     let tw = iw - (tx - x) - right_w - 12.0;
     p.text(&a.what, ui(15.0, 600), tx, y + 2.0, tw, 20.0, 0xFFFFFF, 1.0, Align::Left);
@@ -151,7 +157,7 @@ fn draw(p: &Painter, a: &AlarmView, w: f32, h: f32, hovered: bool, hint: bool) -
     let rx = x + iw - right_w;
     p.text(&a.right_label, ui(11.0, 400), rx, y, right_w, 14.0, 0xC8C8C8, 1.0, Align::Right);
     let rc = if a.green { 0xFFFFFF } else { WARNING_DARK };
-    p.text(&a.right_value, num(36.0, 700), rx, y + 12.0, right_w, 40.0, rc, 1.0, Align::Right);
+    p.text(&a.right_value, value_font, rx, y + 12.0, right_w, 40.0, rc, 1.0, Align::Right);
     y += 50.0 + 14.0;
 
     if let Some(note) = &a.note {

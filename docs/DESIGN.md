@@ -131,8 +131,8 @@ Footer: *Open log folder* and the version.
 - Action: **STOP GPU LOAD NOW** plus one explanatory line.
 - Detail row:
   - small cut bars (10 × 48 px)
-  - what the PSU reported, with numbers
-  - a right-hand block: the countdown, "ANY SECOND" for status 3, or the alarm duration once cleared
+  - what happened and who says so, then the numbers: at most two lines, **one fact per line**, so a sentence never wraps into the next (no orphan words) at any notch width
+  - a right-hand block: the countdown, "ANY SECOND" for status 3, or the alarm duration once cleared. At most 140 DIP wide: a word value shrinks its font (36 → 20 pt) so the text column keeps room on the narrowest notch
 - Full-width **SNOOZE 30 s** button with the `Ctrl+Alt+G` hint.
 - Variants:
 
@@ -140,7 +140,7 @@ Footer: *Open log folder* and the version.
   |---|---|---|
   | MeltAlarm overload | red | right block `HIGHEST WIRE` / `12.4 A` instead of the countdown |
   | PSU status | red | right block: the PSU's countdown |
-  | critical (status 3) | red | "POWER CUT: ANY SECOND" instead of the countdown |
+  | critical (status 3) | red | "POWER CUT: ANY SECOND" instead of the countdown; the band names the status, so the what-line only says "Reported by the PSU" |
   | data lost | red | details dimmed, plus the note "cannot confirm" |
   | cleared | green | "Load back to normal", the advice to inspect the cable, alarm duration, 5 s progress bar, no button |
   | test | red | TEST chip in the band |
@@ -175,6 +175,7 @@ One soft bell-like chime, **synthesized by MeltAlarm** so it doesn't depend on t
 
 | Date | Changes |
 |---|---|
+| 2026-10-01 | Notch numbers one fact per line (no orphan words) |
 | 2026-10-01 | `Not connected` chip; Compact 250 wide with the short name `Cable 2` |
 | 2026-10-01 | Clean-up: the app icon that ships, motion marked as not built, rendering stack as built |
 | 2026-10-01 | Cut bars, names ("GPU power cable"), imbalance; no wire numbers or total |
