@@ -49,6 +49,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libudev-dev
       - name: The pinned Rust toolchain (rust-toolchain.toml)
         run: rustup toolchain install
+      - name: Formatting (rustfmt.toml), the whole workspace
+        run: cargo fmt --all -- --check
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Clippy
         run: cargo clippy --locked $PORTABLE --all-targets -- -D warnings

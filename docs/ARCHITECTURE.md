@@ -459,10 +459,10 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
 **Build:**
 - `x86_64-pc-windows-msvc`, static CRT.
 - `build.rs` embeds the manifest (`requireAdministrator` because of the MSI mutex, `asInvoker` for `simulate`; PerMonitorV2, Common Controls v6, Windows 10/11), the app icon (drawn per size with `paint.rs`) and VERSIONINFO.
-- **Toolchain** pinned in `rust-toolchain.toml` (CI and releases use exactly that compiler and clippy; bumped deliberately). `rustfmt` is not enforced yet.
+- **Toolchain** pinned in `rust-toolchain.toml` (CI and releases use exactly that compiler, clippy and rustfmt; bumped deliberately). Formatting: `rustfmt.toml` (140 columns, short expressions on one line, chosen to match the code as first written); the reformat commit is in `.git-blame-ignore-revs`.
 - **CI** (`.github/workflows/ci.yml`, every push to `main` and every pull request):
   - Windows: clippy for both builds with warnings as errors (this includes the hidapi deny-list), the tests of both builds, a release build, and the read-only guard (§9) on it
-  - Linux: clippy and tests of the portable crates (model, core, source-api, source-msi, source-sim, runtime, lifecycle), which keeps them portable before any Linux frontend exists
+  - Linux: the formatting check of the whole workspace, then clippy and tests of the portable crates (model, core, source-api, source-msi, source-sim, runtime, lifecycle), which keeps them portable before any Linux frontend exists
 - **Release** (`.github/workflows/release.yml`, a `vX.Y.Z` tag): CI first, then a clean build without cache; the tag, `Cargo.toml` and the exe's FileVersion must agree; the guard on the exe; `SHA256SUMS`; a **build provenance attestation** (anyone can check a download with `gh attestation verify meltalarm.exe --repo DeniDoman/meltalarm`); then a **draft** release with its notes from `CHANGELOG.md`. Nothing is published automatically: the maintainer smoke-tests the draft's exe on the real PSU, then publishes. Run by hand, the workflow is a dry run that creates no release.
 - **Supply chain:** third-party actions pinned to commit hashes; read-only permissions, except the release job (write the draft, sign the attestation); no secrets. Code signing is not used (it costs money); the pipeline is the place to add it.
 - **Repo:** MIT; `docs/`; the research material (PSU.dll, raw captures, original notes) stays local and git-ignored.
@@ -583,6 +583,7 @@ Known limits for that day, deliberately not built yet (YAGNI):
 
 | Version | Date | Changes |
 |---|---|---|
+| 3.3 | 2026-10-01 | rustfmt enforced by CI (§10) |
 | 3.2 | 2026-10-01 | Motion: `anim`, frames in `gfx`, the edge reveal, one animation timer (§7) |
 | 3.1 | 2026-10-01 | CI and the release pipeline: the read-only guard script, the pinned toolchain, draft releases with build provenance (§9, §10) |
 | 3 | 2026-10-01 | Rewritten to describe the system as built after the architecture review: core modules by spec section, the simulator crate, the Windows modules (`card`, `palette`, `edge`, `menu`), vendor words from the source (D18–D20), the full hidapi deny-list, status and roadmap |

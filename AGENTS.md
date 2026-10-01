@@ -133,6 +133,7 @@ cargo test --workspace --exclude meltalarm-win      # portable crates (also run 
 cargo test -p meltalarm-win --features simulate     # the real manifest needs elevation; simulate doesn't
 cargo clippy --workspace --all-targets              # includes the read-only lint
 cargo clippy -p meltalarm-win --features simulate --all-targets
+cargo fmt --all                                     # rustfmt.toml; CI fails on unformatted code
 cargo build --release -p meltalarm-win              # the exe; the version comes from the workspace Cargo.toml
 ```
 
@@ -159,7 +160,7 @@ Stage explicit paths, never `git add -A`. Use the repository's configured commit
 **Style.**
 - English everywhere.
 - Docs: plain, short, concrete sentences. Prefer tables and lists to paragraphs.
-- Code reads like the code around it: comment density, naming, idiom. `rustfmt` is not enforced yet, so don't reformat files wholesale.
+- Code reads like the code around it: comment density, naming, idiom. Run `cargo fmt` before committing (`rustfmt.toml`; CI checks it). A commit that only reformats goes into `.git-blame-ignore-revs`.
 - Say "12V-2x6", never "12VHPWR". Users read "GPU power cable"; only the README bridges the two (and names 12VHPWR once, so people recognize the connector).
 
 ---
