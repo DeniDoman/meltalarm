@@ -1,6 +1,6 @@
 # MeltAlarm — Functional Specification
 
-**Status:** v2.5 · **Date:** 2026-10-01 · v2.5: names ("GPU power cable", numbered only when it helps), "imbalance" for the spread, no wire numbers or total in the views (§7.0) · v2.4: MeltAlarm's own cable limits next to the PSU's verdict ("one alarm, two judges"), the alert ladder (alarm, caution, advisory, status), cable notes (§6, §7, §8, F20–F22) · v2.3: floating monitor (§7.4) · v2.2: distribution as one self-installing exe: install, update, uninstall (§4) · v2.1: the FA 51 connect handshake (F19), device identification by USB ID, startup that never gives up on a present PSU
+**Status:** v2.6 · **Date:** 2026-10-01 · Companions: `DESIGN.md` (how it looks), `ARCHITECTURE.md` (how it is built) · Changes: §13
 
 **Supported hardware:**
 - MSI **MPG Ai1300TS** and **MPG Ai1600TS** PSUs, connected by USB.
@@ -19,7 +19,7 @@ MeltAlarm is a **notifier, not a protector**. It cannot reduce the load or cut p
 
 ## 1. Research findings
 
-Measured on 2026-09-27 on a **reference system** (Ai1300TS, fw `MFR_Version 1.0`, rev `10`, RTX 5090 on connector #1) with a read-only R&D probe (the `psu-probe` tool is its successor). Raw captures are kept privately because they contain the unit serial.
+Measured on 2026-09-27 on a **reference system** (Ai1300TS, fw `MFR_Version 1.0`, rev `10`, RTX 5090 on connector #1) with a read-only R&D probe (v1 publishes it as the `psu-probe` tool). Raw captures are kept privately because they contain the unit serial.
 
 The concrete values below describe that one system. The app treats every one of them as **read at runtime or handled generically**, never hardcoded.
 
@@ -36,7 +36,7 @@ The concrete values below describe that one system. The app treats every one of 
 | F9 | `0xE1` gives 18 protection flag bytes; all 0 in normal operation. | probe | — |
 | F10 | One transaction takes **0.6–0.9 ms**. 1170/1170 transactions succeeded across all runs. | watch runs | 1 Hz polling is negligible load |
 | F11 | An unused connector reads **exactly 0.000 A**. The used connector at idle reads 0.06–0.19 A per wire. | idle watch | Presence detection (§6.7) |
-| F12 | Healthy cable at full load (2× FurMark, ~575 W, 47–50 A): hottest wire **max 8.56 A**, spread (max−min) **max 0.69 A**, relative deviation max 5.2 %. At idle, relative deviation reaches ~40 % from quantization noise. | load watch, 180 loaded samples | **Deviation is measured in amps, not percent**; the healthy peak sits below the rating with margin (§6.2) |
+| F12 | Healthy cable at full load (2× FurMark, ~575 W, 47–50 A): hottest wire **max 8.56 A**, imbalance (max−min) **max 0.69 A**, relative deviation max 5.2 %. At idle, relative deviation reaches ~40 % from quantization noise. | load watch, 180 loaded samples | **Deviation is measured in amps, not percent**; the healthy peak sits below the rating with margin (§6.2) |
 | F13 | A Windows sound scheme can remap "Critical Stop" (`SystemHand`); on the reference system it plays `Windows Foreground.wav`. The file `C:\Windows\Media\Windows Critical Stop.wav` (0.9 s) is standard on Windows 10/11. | registry, filesystem | Play the file, not the alias (§8.3) |
 | F14 | English SAPI voices ship with Windows (David, Zira, Mark…). | registry | Voice needs no install |
 | F15 | Ctrl+Alt+G was free on the reference system. | `RegisterHotKey` test | Hotkey; a registration failure is handled (§8.5) |
@@ -51,7 +51,7 @@ The concrete values below describe that one system. The app treats every one of 
 **Not verified, and not provoked on purpose (hardware safety):**
 - whether an `E0` reading is an instantaneous value, an average or a held peak (matters for the one-reading 15 A rule, §6.3)
 - PSU behavior during a real alarm
-- the firmware's exact spread formula
+- the firmware's exact imbalance formula
 - whether TriggerTime is in seconds
 - what RunTime in `C1` means during an alarm
 - how fast status 3 cuts power
@@ -92,7 +92,7 @@ MeltAlarm logs enough on the first real event to settle these (§9).
    - **reads** `00 51 <reg> 00…`, with `<reg>` ∈ `0x10 0x11 0x12 0x13 0xC0 0xC1 0xE0 0xE1`
    - **the connect handshake** `00 FA 51 00…`, exactly as MSI Center and Afterburner send it (F19). It is sent only when a connection is opened (startup, reconnect), never per tick.
 2. No code path sends opcode `0x50` (write), register `0xF1` (save), `0xC2` (buzzer), or any byte derived from settings, UI, CLI or IPC.
-3. A unit test asserts every constructible packet. A code-review checklist item confirms `HidDevice::write` has a single call site.
+3. A unit test asserts every constructible packet. A lint forbids every hidapi call that sends bytes to a device (`write`, `send_output_report`, `send_feature_report`, `get_feature_report`), except the one reviewed `write` call site per source (ARCHITECTURE §9).
 4. The app never modifies MSI Center, Afterburner, HWiNFO or their configs.
 
 ---
@@ -172,7 +172,7 @@ Updates are manual: the user downloads the new exe and runs it. When another cop
 | same | no dialog: acts as a second launch (§4.1). If the installed copy isn't running, it is started. |
 
 - **Update / Replace:** the running MeltAlarm is stopped (logged, §9), the installed file replaced, the installed-apps version updated, and the installed copy started. Settings, the log, the startup task and pinned tray icons are kept. Monitoring pauses for a few seconds.
-- **Refused during an alarm** (either judge): "An alarm is active. Update after it clears." Stopping the app would silence the alarm.
+- **Refused during an alarm** (either judge): "A cable alarm is active. Update MeltAlarm after it has cleared." Stopping the app would silence the alarm. Install is refused the same way while another copy is in an alarm.
 - **Never leaves the user without a working MeltAlarm.** If replacing fails, the previous version stays installed and is started again.
 - A running MeltAlarm that hasn't closed 5 s after being asked (an older version that doesn't understand the request, or a hung one) is terminated.
 
@@ -362,9 +362,9 @@ If the last valid sample is older than 1 tick, values are shown as stale (dimmed
 
 **Losing monitoring is itself a caution** (§8.8): when NO DATA begins after the app has had data, the user is told once, because they would otherwise believe they are protected. Suspend and resume are not a loss.
 
-### 6.9 Safeguard+ disabled
-If `C0.IsEnable = 0`:
-- the popup shows the persistent line *"PSU Safeguard+ is OFF: the PSU won't cut power. MeltAlarm still alarms."*
+### 6.9 PSU protection disabled
+If the PSU reports its own protection as off (MSI: Safeguard+, `C0.IsEnable = 0`):
+- the popup shows the persistent line *"PSU Safeguard+ is OFF: the PSU won't cut power. MeltAlarm still alarms."* The protection's name comes from the source; MeltAlarm's own text never names a vendor feature.
 - the tray icon shows the attention marker
 - the event is logged
 
@@ -385,8 +385,8 @@ This is a **status** (§8), not an episode: nothing interrupts the user. The app
 ### 7.1 Tray icons
 - One icon per **tracked** cable (1 or 2), in the fixed order 1 then 2.
 - The glyph is **6 squares in 2 rows of 3**. Square *n* = wire *n* (row 1: wires 1–3, row 2: wires 4–6), colored per §6.2.
-- Visual states (exact look is decided in the UI design phase):
-  - neutral (normal, "dark cockpit") / amber / red squares — see DESIGN.md
+- Visual states (the look: DESIGN.md "Tray icon"):
+  - neutral (normal, "dark cockpit") / amber / red squares
   - **alarm on this connector** (ours or the PSU's): must look distinct from red squares (blinking tile)
   - **grey**: NO DATA, or connector not connected
   - **connecting**: before the first successful connection, a single hollow icon with the tooltip *"MeltAlarm · connecting to the PSU…"* (§5.1)
@@ -394,7 +394,7 @@ This is a **status** (§8), not an episode: nothing interrupts the user. The app
 - **One vocabulary on every surface** (tooltip, flyout chip, floating view): `OK`, `Caution`, `ALARM`, `No data` (plus `Not connected` in the tooltip).
 - Tooltip, one line (Windows wraps tray tips at about 50 characters): `MeltAlarm · OK · max 8.6A · Δ 0.7A` (Δ = imbalance); with two tracked cables `MeltAlarm · Cable 2 · OK · max 8.6A · Δ 0.7A`. Other states: `Caution · max 9.9A · Δ 0.7A`, `ALARM: <short reason>`, `No data`, `Not connected`. With a cable note and no live problem: `MeltAlarm · OK · check the cable`.
 - Left click toggles the status popup for **that icon's connector**.
-- Right click opens a menu: *Settings…*, *Open alarm log*, *Exit* (Exit asks for confirmation: "Monitoring will stop"). The menu header shows the app version.
+- Right click opens a menu: *Settings…*, *Open alarm log*, *Exit* (Exit asks for confirmation: "Monitoring will stop"). The menu header shows the app version. Until the Settings window exists, the settings sit in this menu (§7.3).
 - Windows 11 hides new tray icons in the overflow area by default. First run explains how to pin the icon.
 
 ### 7.2 Status popup
@@ -412,7 +412,8 @@ This is a **status** (§8), not an episode: nothing interrupts the user. The app
 
 ### 7.3 Settings window
 
-> **v0 (first personal build):** there is no settings window yet. The same three settings plus *Test alarm* sit in the tray right-click menu as checkmark items (ARCHITECTURE §7), together with *Install…* (portable copy) or *Uninstall…* (installed copy). The window below arrives in v1, and the menu then shrinks to *Settings… / Open alarm log / Exit*.
+> **Until v1:** there is no Settings window yet. The three settings below plus *Test alarm* sit in the tray right-click menu as checkmark items, together with *Install…* (portable copy) or *Uninstall…* (installed copy). The window arrives in v1, and the menu then shrinks to *Settings… / Open alarm log / Exit*.
+
 | Setting | Default | Notes |
 |---|---|---|
 | Run at Windows startup | **On** | Installed copy only: creates or removes the startup task (§4.1). A portable copy shows an **Install…** button here instead (§4.5). |
@@ -424,12 +425,10 @@ This is a **status** (§8), not an episode: nothing interrupts the user. The app
   > **Your PSU** alarms at 12.0 A per wire or 5.5 A imbalance after 20 s, and cuts power 180 s later.
 
   Overridden values are marked *custom*. For a PSU without a verdict the second sentence reads "Your PSU reports currents only".
-- Read-only info block: MeltAlarm version, PSU model, firmware, serial, Safeguard+ state.
+- Read-only info block: MeltAlarm version, PSU model, firmware, serial, and the state of the PSU's protection (MSI: Safeguard+).
 - Buttons: **Test alarm** (§8.5), **Open log folder**, and **Uninstall…** (installed copy only, §4.7).
 - Settings apply immediately. They are stored in `%APPDATA%\MeltAlarm\settings.toml`.
 - **Cable limits in the file only** (§6.1), for advanced users; the README documents them: `limit_rating`, `limit_alarm`, `limit_alarm_seconds`, `limit_fast`, `limit_instant`, `limit_uneven` (amps, seconds). Read at start.
-
----
 
 ### 7.4 Floating monitor
 
@@ -460,6 +459,8 @@ Each tracked connector has **one view**, in one of three states: *hidden*, *flyo
 
 **Remembered per connector**, saved at every change: floating or not, the display (by its hardware identity), the position on that display, the layout, and a scale for each layout. The file sits next to the settings (`%APPDATA%\MeltAlarm\window.toml`). Deleting it just resets the placements.
 
+---
+
 ## 8. Alerts
 
 **The alert ladder.** Every abnormal condition sits on exactly one level. Each level has **one** attention channel, and each channel means exactly one thing (aviation practice: warning, caution, advisory, status).
@@ -487,8 +488,8 @@ Each (connector, cause) pair is tracked separately. The alarm lasts while any pa
 - Attached to the **top edge, centered, on every monitor**. Flat top edge; rounded bottom corners.
 - **Size:**
   - width = 32 % of the monitor's width, clamped to **560–880 DIP**
-  - height = fits the content, about **200–260 DIP**
-  - This is readable at arm's length without covering the middle of the screen. Examples: 1920×1080 → ~614×230 px; 2560×1440 → ~819×230 px; 4K at 150 % → 880×230 DIP.
+  - height = fits the content, about **280 DIP** with the snooze button
+  - This is readable at arm's length without covering the middle of the screen. Widths: 1920×1080 → ~614 px; 2560×1440 → ~819 px; 4K at 150 % → 880 DIP.
 - Topmost and **never steals focus**, so the game keeps input and a borderless game doesn't minimize. Clicking the button is the only interaction.
 - Content, in priority order (flat, high contrast, readable at a glance):
   1. **Headline:** `GPU POWER CABLE OVERLOAD`
@@ -550,7 +551,7 @@ A small amber strip at the same place as the notch: the top edge, centered, on e
   - `A wire at 9.9 A, above the 9.5 A rating · Ease the GPU load` (with two cables: `Cable 2 · A wire at 9.9 A, …`)
   - `Monitoring lost · MeltAlarm can't read the PSU`
   - `PSU fault · Fan failure · The PSU may shut down`
-- **Shows for 10 s**, then slides away. Its text is a snapshot (no live flicker).
+- **Shows for 10 s**, then disappears. Its text is a snapshot (no live flicker).
 - A second caution during those 10 s replaces the text and restarts the 10 s, without a second chime.
 - **Never interactive:** topmost, never takes focus, and **clicks pass through it** to the game.
 - Not shown while the notch is visible (§8). When an alarm starts, the strip is replaced by the notch at once.
@@ -592,28 +593,28 @@ During a game Windows holds notifications back silently and shows them in the no
 - Events:
 
 ```
-2026-09-27 18:01:00 | LIMITS        | v1 · rating 9.5 A · alarm 10.5 A for 4 s, 12.0 A twice, 15.0 A once · uneven 3.0 A   (at start; "custom" marks overrides)
+2026-09-27 18:00:58 | LIMITS        | v1 · rating 9.5 A · alarm 10.5 A for 4 s, 12.0 A twice, 15.0 A once · uneven 3.0 A      (at connect; "v1 custom" marks overrides)
+2026-09-27 18:00:59 | CONFIG        | Safeguard+ ON · OCP 12.0 A for 20 s · imbalance 5.5 A for 20 s · power cut 180 s after alarm   (at start and on change)
 2026-09-27 18:01:40 | CAUTION       | GPU power cable 1 | wire 3 = 9.9 A above the 9.5 A rating for 10 s | wires 9.1 9.3 9.9 8.8 9.0 9.2
 2026-09-27 18:02:11 | OVERLOAD      | GPU power cable 1 | wire 3 = 12.4 A · 2 readings >= 12.0 A | wires 9.1 9.3 12.4 8.8 9.0 9.2 | imbalance 3.6 A
 2026-09-27 18:02:40 | OVERLOAD END  | GPU power cable 1 | 29 s | peak wire 3 = 12.9 A
 2026-09-27 18:03:30 | CAUTION END   | GPU power cable 1 | 110 s | peak wire 3 = 12.9 A
 2026-09-27 18:04:05 | UNEVEN LOAD   | GPU power cable 1 | imbalance 4.1 A at 7.9 A average for 10 s | wires 9.4 9.3 5.3 8.8 9.0 9.2
-2026-09-27 18:09:00 | UNEVEN END    | GPU power cable 1 | 295 s | peak imbalance 4.4 A
-2026-09-27 18:05:40 | PSU ALARM     | GPU power cable 1 | status 2 Current imbalance | E1 wires: 3 | wires 9.8 9.9 2.1 9.7 9.8 9.9
-2026-09-27 18:05:40 | PSU RAW C1    | 51C102...          (at start, then every 10 s while the alarm lasts)
+2026-09-27 18:05:40 | PSU ALARM     | GPU power cable 1 | status Current imbalance | flagged wires: 3 | wires 9.8 9.9 2.1 9.7 9.8 9.9
+2026-09-27 18:05:40 | PSU RAW       | C1 51C102...       (when the alarm starts, then every 10 s while it lasts)
 2026-09-27 18:06:22 | PSU CLEAR     | GPU power cable 1 | 42 s
+2026-09-27 18:09:00 | UNEVEN END    | GPU power cable 1 | 295 s | peak imbalance 4.4 A
 2026-09-27 18:10:00 | PSU FLAG      | OTP (PSU over-temperature) set
 2026-09-27 19:00:00 | NO DATA       | PSU stopped answering
 2026-09-27 19:00:12 | DATA BACK     | after 12 s
-2026-09-28 00:06:32 | NOT CONNECTED | PSU present but not answering (Timeout) — still trying     (once, 2 min after start)
-2026-09-28 00:07:10 | CONNECTED     | MSI MPG Ai1300TS after 2 min 38 s                            (only if NOT CONNECTED was logged)
-2026-09-28 00:02:00 | STOPPED       | Monitoring not started: no supported PSU found                (startup exit, §5.1)
-2026-09-27 20:00:00 | CONFIG        | Safeguard+ ON · OCP 12.0 A · Diff 5.5 A · trig 20/20 s · cut 180 s   (at start and on change)
 2026-09-27 20:00:00 | CONFIG        | WARNING: Safeguard+ is OFF on the PSU
-2026-10-02 18:00:00 | INSTALL       | MeltAlarm 0.2.0 installed · starts with Windows                (§4.5)
-2026-10-05 18:00:00 | STOPPED       | Monitoring stopped: updating to 0.3.0                           (written by the updater, §4.6)
-2026-10-05 18:00:02 | INSTALL       | updated 0.2.0 → 0.3.0                                            (or: replaced 0.3.0 with 0.2.0)
-2026-10-09 18:00:00 | STOPPED       | Monitoring stopped: uninstalled                                 (only if the log is kept, §4.7)
+2026-09-28 00:06:32 | NOT CONNECTED | PSU found but not answering (Timeout) — still trying     (once, 2 min after start)
+2026-09-28 00:07:10 | CONNECTED     | MSI MPG Ai1300TS after 158 s                              (only if NOT CONNECTED was logged)
+2026-09-29 08:02:00 | STOPPED       | Monitoring not started: MeltAlarm supports only MSI MPG Ai1300TS / Ai1600TS power supplies…   (startup exit, §5.1)
+2026-10-02 18:00:00 | INSTALL       | MeltAlarm 0.2.0 installed · starts with Windows          (§4.5)
+2026-10-05 18:00:00 | STOPPED       | Monitoring stopped: updating to 0.3.0                     (written by the updater, §4.6)
+2026-10-05 18:00:02 | INSTALL       | updated 0.2.0 → 0.3.0                                      (or: replaced 0.3.0 with 0.2.0)
+2026-10-09 18:00:00 | STOPPED       | Monitoring stopped: uninstalled                           (only if the log is kept, §4.7)
 ```
 
 - Episodes follow §6.3–6.4: a condition that comes and goes within the 30 s end window is one episode, so one noisy minute produces one pair of lines.
@@ -639,7 +640,7 @@ During a game Windows holds notifications back silently and shows them in the no
 ---
 
 ## 11. Acceptance tests
-- **T1.** The read-only contract unit test passes. A grep shows a single HID write call site.
+- **T1.** The read-only contract unit test passes. Clippy (with the deny-list) passes, and exactly one `#[allow(clippy::disallowed_methods)]` exists per source crate.
 - **T2.** The installed app starts elevated via the scheduled task with no UAC prompt. A second launch brings the running instance forward and exits.
 - **T3. Coexistence matrix**, 30 min each: MeltAlarm alone; + MSI Center; + HWiNFO64; + Afterburner PSU plugin; all together. Pass criteria: no NO DATA, fewer than 0.1 % failed samples, and the other tools keep showing sane values.
 - **T4.** Unplug the PSU USB: grey icons within ≤ 3 s, NO DATA logged. Replug: live again, DATA BACK logged.
@@ -695,3 +696,17 @@ During a game Windows holds notifications back silently and shows them in the no
 - Whether an `E0` reading is instantaneous, averaged or a held peak (§1). If it is a held peak, the one-reading 15 A rule and the persistence rules need revalidation. A one-off read-only probe (10 readings/s of `E0` for a few minutes under load, only with the user's go-ahead) would settle it.
 - The cable-limit defaults (v1) are engineering defaults; T28 and user reports may tune them in a later limits version.
 - What `FA 51` changes inside the PSU firmware (F19). The working assumption is "host connected, start answering", backed by MSI's own use. It is sent only on connect, never per tick.
+
+---
+
+## 13. Document history
+
+| Version | Date | Changes |
+|---|---|---|
+| 2.6 | 2026-10-01 | Clean-up: log examples match the real log lines, the PSU's protection is named by the source (§6.9), the full hidapi deny-list (§3), notch height, the update refusal text |
+| 2.5 | 2026-10-01 | Names: "GPU power cable", numbered only when it helps; "imbalance" for the spread; no wire numbers or total current on screen (§7.0) |
+| 2.4 | 2026-10-01 | MeltAlarm's own cable limits next to the PSU's verdict ("one alarm, two judges"); the alert ladder; cable notes (§6, §7, §8, F20–F22) |
+| 2.3 | 2026-09-30 | Floating monitor (§7.4) |
+| 2.2 | 2026-09-28 | One self-installing exe: install, update, uninstall (§4) |
+| 2.1 | 2026-09-28 | The `FA 51` connect handshake (F19), identification by USB ID, a startup that never gives up on a present PSU |
+| 2.0 | 2026-09-27 | First published version, after the first measurements |

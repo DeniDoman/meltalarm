@@ -1,6 +1,8 @@
 # MeltAlarm — UI Design
 
-**Status:** approved 2026-09-27; alert ladder added 2026-10-01 · Visual reference: the concept board artifact (private) — https://claude.ai/artifact/LPiwjezynYcWmUvdteydLr
+**Status:** approved 2026-09-27; alert ladder, cut bars and names 2026-10-01 · Companion of `FUNCTIONAL_SPEC.md` (what) and `ARCHITECTURE.md` (how) · Visual reference: the concept board artifact (private) — https://claude.ai/artifact/LPiwjezynYcWmUvdteydLr
+
+Every surface the user can see has an entry here and is checked on screen at real size before it ships.
 
 Principle: **quiet when fine, unmistakable when not.**
 
@@ -14,7 +16,7 @@ Principle: **quiet when fine, unmistakable when not.**
 | Popup visualization | **Cut bars** (2026-10-01): one bar per wire, its top is the alarm limit, cut straight across at the rating; a knee scale gives the decision range room. No limit lines, no labels, no wire numbers; the value sits under each bar. Mockups: https://claude.ai/artifact/J2r5BVZFm4CpT16r4W9GyT |
 | Names | "GPU power cable", numbered only when two are tracked or for an untracked one (Spec §7.0); "Imbalance", never "spread"; no total current. |
 | Fonts | Segoe UI Variable for UI text; Bahnschrift for numbers and the alarm (tabular figures). Both ship with Windows. |
-| Motion | Popup: 150 ms rise and fade. Alarm notch and caution strip: 200 ms drop from the top edge. Tray alarm blinks at 1 Hz. Locate pulse 0.6 s. Nothing else animates. |
+| Motion | Tray alarm blinks at 1 Hz. Locate pulse 0.6 s. Nothing else animates. *Designed, not built yet (v1):* popup 150 ms rise and fade; notch and caution strip 200 ms drop from the top edge. Until then they appear and disappear at once. |
 | Alert ladder | Spec §8. **Alarm** = the red notch + alarm sound + voice. **Caution** = the amber strip + one chime. **Advisory** = a silent notification. **Status** = the attention marker. Each channel means exactly one level. |
 | Vocabulary | One set of state words on every surface: `OK`, `Caution`, `ALARM`, `No data`. The PSU's own verdict appears only as information ("PSU status", "reported by the PSU"). |
 
@@ -24,7 +26,7 @@ Principle: **quiet when fine, unmistakable when not.**
 |---|---|---|
 | Normal (neutral) | `#F2F2F2` (tray) / `#E6E6E6` (bars) | `#1B1B1B` (tray) / `#3A3A3A` (bars) |
 | Caution | `#F5A623` | `#B86E00` (graphics), `#8F5600` (text) |
-| Warning | `#FF4D4F` | `#D1242F` (graphics), `#B81F29` (text) |
+| Warning | `#FF4D4F` (graphics), `#FF6B6D` (text) | `#D1242F` (graphics), `#B81F29` (text) |
 | PSU alarm band / tile | `#C8102E` + white | same |
 | Cleared band | `#1E7F45` + white | same |
 | Accent (toggles, links) | `#4CC2FF` | `#005FB8` |
@@ -48,9 +50,10 @@ Principle: **quiet when fine, unmistakable when not.**
 
 The exe's own icon, seen in the Start menu, Installed apps, the UAC prompt, Explorer and notification headers. *Added 2026-09-28, after the first install showed Windows' generic icon.*
 
-- The tray glyph's six squares, `#F2F2F2`, centered on a rounded tile `#1F1F1F` (corner radius 20 %). From 24 px up, a 1 px inner edge of white at 12 % keeps the tile visible on dark backgrounds.
+- **The face of the 16-pin plug**: the housing outline, the latch on top and the six pins, `#F2F2F2` on a rounded tile `#1F1F1F` (corner radius 20 %). From 24 px up, a 1 px inner edge of white at 12 % keeps the tile visible on dark backgrounds.
+- **Below 24 px** only the six pins remain, like the tray glyph (squares 3×3, gap 1 at 16 px).
 - Neutral on purpose: color stays reserved for state ("color = state only").
-- Drawn separately at each size (16, 20, 24, 32, 40, 48, 64, 96, 128 px), with squares snapped to whole pixels, never scaled from one master. At 16 px: squares 3×3, gap 1.
+- Drawn separately at each size (16, 20, 24, 32, 40, 48, 64, 96, 128 px), with edges snapped to whole pixels, never scaled from one master.
 - The app name everywhere is just **MeltAlarm** (the exe's FileDescription), never a tagline.
 
 ## Notifications
@@ -76,7 +79,7 @@ From top to bottom:
    | `ALARM` | solid `#C8102E`, white dot and text |
    | `No data` | neutral track fill, no dot, tertiary text |
 
-2. During an alarm: a red strip with the reason (`Wire 3 overload · 12.4 A`, or `PSU: Current imbalance · wire 3`) and, from the PSU, the countdown.
+2. During an alarm: a red strip with the reason (`Wire overload · 12.4 A`, or `PSU: Current imbalance`) and, from the PSU, the countdown (`Power cut in ~2:47`).
 3. **Cut bars** (96 px tall, 14 px wide) with the value under each; no wire numbers. See "Cut bars" below.
 4. Live lines (amber or info tint): above the rating, over the alarm limit, uneven load, PSU faults, Safeguard+ OFF, monitoring interrupted.
 5. The **cable note**, once the connector is back to OK: the caution tint, the note text, and a **Dismiss** link (accent color, right-aligned under the text, 13 px). Hit area at least 28 px tall.
@@ -104,7 +107,7 @@ A connector's view taken out of the tray to watch it for a long time (Spec §7.4
 | Content | name + chip (`OK` / `Caution` / `ALARM` / `No data`), six cut bars (56 px, 10 px wide) with values, one summary line | exactly the popup |
 | Summary line | the most important thing, in the Spec §7.4 order: alarm (`Overload · 12.4 A · stop`, `Imbalance · cut ~2:13`) in warning red; caution (`9.9 A · over rating`) and uneven load (`Imbalance 4.1 A`) in caution text; no data (`Last reading 12 s ago`); a cable note (`Check the cable`) in caution text; else `Imbalance 0.4 A` | — |
 
-- **Calm when fine:** at rest only data is visible. On hover: × (top right), a 36 × 18 tab with a chevron hanging off the bottom edge (⌄ = Full, ⌃ = Compact), a faint resize grip in the bottom-right corner, and the border brightens to `#555555`.
+- **Calm when fine:** at rest only data is visible. On hover: × (top right), a 36 × 18 tab with a chevron hanging off the bottom edge (⌄ = Full, ⌃ = Compact), a faint resize grip in the bottom-right corner, and the border brightens to `#555555` (light theme `#B0B0B0`).
 - **Scaling is uniform:** the layout is drawn at the chosen scale and never distorts. Each layout remembers its own scale.
 - **Locate pulse:** a 2 px accent ring (`#4CC2FF`) with a soft 6 px halo, for 0.6 s.
 - Card, shadow, colors, fonts: as the popup, following the system light or dark theme.
@@ -163,6 +166,6 @@ One soft bell-like chime, **synthesized by MeltAlarm** so it doesn't depend on t
 
 ## Rendering stack (constraint for the architecture)
 
-- Win32 windows with **Direct2D + DirectWrite in software mode** (WARP/software render target), so no GPU driver is loaded into the process.
-- A small set of self-drawn controls: button, toggle, checkbox, bars, chip, text.
-- DWM supplies the Windows 11 rounded corners, backdrop and dark title bar. Where that isn't available (Windows 10, or trouble in the prototype), the fallback is solid surface colors.
+- Win32 windows with **Direct2D + DirectWrite in software mode** (software render target), so no GPU driver is loaded into the process.
+- The flyout, the floating view, the notch and the strip are **layered windows drawn entirely by MeltAlarm**: card, rounded corners, shadow and border included, with solid surface colors (no Mica or acrylic), so Windows 10 needs no separate look (to be confirmed in the v1 Windows 10 pass).
+- A small set of self-drawn controls: button, toggle, checkbox, bars, chip, text. The Settings window (v1) is a normal window; DWM supplies its title bar and corners.
