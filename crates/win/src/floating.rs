@@ -47,6 +47,9 @@ struct Drag {
     pos0: (i32, i32),
     size0: (i32, i32),
     scale0: f32,
+    /// While scaling: the user scale the drag has reached. Saved only when the drag ends, so
+    /// every redraw meanwhile (the 1 Hz data update too) must use it, not the saved one.
+    live: Option<f32>,
 }
 
 struct Win {
@@ -166,7 +169,21 @@ impl Floating {
                 let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             }
         } else {
-            self.render(gfx, c, light, key, &place, None);
+            // Mid-scale: draw at the size being dragged to, anchored like the drag, or the
+            // saved (old) size flashes up on every data update.
+            let scaling = self.wins.get(key).and_then(|w| w.drag).and_then(|d| match (d.hit, d.live) {
+                (Hit::Edge(sx, sy), Some(user)) => Some((sx, sy, d, user)),
+                _ => None,
+            });
+            match scaling {
+                Some((sx, sy, d, user)) => {
+                    let mut p = place.clone();
+                    p.set_scale(user);
+                    let r0 = RECT { left: d.pos0.0, top: d.pos0.1, right: d.pos0.0 + d.size0.0, bottom: d.pos0.1 + d.size0.1 };
+                    self.render(gfx, c, light, key, &p, Some((sx, sy, r0)));
+                }
+                None => self.render(gfx, c, light, key, &place, None),
+            }
         }
     }
 
@@ -233,7 +250,7 @@ impl Floating {
         self.show(gfx, c, light, &key);
         if tear_off && let Some(win) = self.wins.get_mut(&key) {
             // The mouse button is still down: the new window takes over the drag.
-            win.drag = Some(Drag { hit: Hit::Move, cursor0: cursor(), pos0: win.pos, size0: win.size, scale0: 1.0 });
+            win.drag = Some(Drag { hit: Hit::Move, cursor0: cursor(), pos0: win.pos, size0: win.size, scale0: 1.0, live: None });
             // SAFETY: our own window, on the thread that owns the pressed mouse button.
             unsafe {
                 SetCapture(win.hwnd);
@@ -377,6 +394,9 @@ impl Floating {
                             p.set_scale(d.scale0 * ratio);
                             if let Some(w) = self.wins.get_mut(&key) {
                                 w.pos = d.pos0;
+                                if let Some(drag) = &mut w.drag {
+                                    drag.live = Some(p.scale());
+                                }
                             }
                             self.render(gfx, c, light, &key, &p, Some((sx, sy, rect(d.pos0, d.size0))));
                         }
@@ -417,7 +437,7 @@ impl Floating {
                 Hit::Move | Hit::Edge(..) => {
                     let user = scale / placement::display_of(&rect(pos, size)).dpi;
                     if let Some(w) = self.wins.get_mut(&key) {
-                        w.drag = Some(Drag { hit, cursor0: screen, pos0: pos, size0: size, scale0: user });
+                        w.drag = Some(Drag { hit, cursor0: screen, pos0: pos, size0: size, scale0: user, live: None });
                     }
                     // SAFETY: our own window.
                     unsafe {
