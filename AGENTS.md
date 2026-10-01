@@ -138,7 +138,7 @@ cargo build --release -p meltalarm-win              # the exe; the version comes
 
 **The simulator.** Run `target/debug/meltalarm.exe --portable` built with `--features simulate`. It needs no elevation and never touches USB.
 - `MELTALARM_SIM` picks the scenario: `cycle` (the default; walks through every alert), `normal`, `idle`, `caution`, `overload`, `uneven`, `red`, `alarm`, `critical`, `fault`, `nodata`, `silent`, `slow`.
-- `MELTALARM_MUTE=1` silences it.
+- `MELTALARM_MUTE=1` silences it; `MELTALARM_SLOWMO=10` makes every transition 10 times slower, to check motion frame by frame; `MELTALARM_ANIMATIONS=on|off` overrides Windows' animation setting.
 - `--popup` opens the flyout at start; `--test-alarm` runs the test alarm.
 - Its data lives in `%APPDATA%\MeltAlarm-sim`.
 

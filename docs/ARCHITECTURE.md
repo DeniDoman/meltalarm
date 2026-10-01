@@ -308,18 +308,21 @@ pub struct Output { pub log: Vec<LogEvent>, pub settings_changed: Option<Setting
 | `main` | Single instance, composition (`Host` with the MSI driver, or the simulator), the `App` state, `reconcile`, window procedures, deferred work outside the `App` borrow (menus and dialogs re-enter the window procedure) |
 | `menu` | The tray menu; until the Settings window exists it holds the settings as checkmarks |
 | `tray` + `glyph` + `paint` | `Shell_NotifyIconW` v4, `TaskbarCreated` (allowed through UIPI), DPI-sized ARGB glyphs drawn on the CPU; `paint` is shared with `build.rs` for the app icon |
-| `gfx` | Direct2D + DirectWrite in software mode into layered windows; text measurement; a small painter API |
+| `gfx` | Direct2D + DirectWrite in software mode into layered windows; text measurement; a small painter API. A `Frame` is drawn once and can be shown in part or translucent, so a transition never redraws |
+| `anim` | Motion (DESIGN.md "Motion"): transitions and easing, Windows' "Animation effects" setting (off: every change is instant). Dev-only overrides in `simulate` builds: `MELTALARM_SLOWMO`, `MELTALARM_ANIMATIONS` |
 | `palette` | Color tokens (DESIGN.md "State colors"), the ambient theme (light/dark), level colors |
 | `card` | The connector card: header and chip, cut bars, live lines, cable note, footer; shared by the flyout, the floating view and (cut bars) the notch |
-| `popup` | The flyout window: anchoring above its icon, hit areas |
+| `popup` | The flyout window: anchoring above its icon, hit areas, its rise and fade |
 | `floating` + `placement` | Floating views: own mouse capture for move and uniform scale, hover controls, locate pulse; `window.toml` and display identity (§7.2) |
-| `edge` | One window per monitor fused to the top edge, recreated when monitors change; used by `overlay` (the notch) and `strip` (the caution strip) |
+| `edge` | One window per monitor fused to the top edge, recreated when monitors change; the drop and the retract, revealed from the edge so they never spill onto a monitor above; used by `overlay` (the notch) and `strip` (the caution strip) |
 | `overlay`, `strip` | The notch (snooze button, hotkey hint) and the click-through caution strip |
 | `audio` | The alarm thread: `PlaySoundW` file + SAPI `ISpVoice` executing the `AudioScript`; the caution chime synthesized once in memory (`SND_MEMORY \| SND_ASYNC`) |
 | `autostart`, `lifecycle` | Task Scheduler XML; install, update, uninstall and the control window (§7.1) |
 | `sys` | Paths, wall clock, theme, message boxes, shell |
 
-**Not built yet (v1):** the Settings window (then the menu shrinks to Settings… / Open alarm log / Exit), motion (DESIGN.md "Motion"), the Windows 10 pass.
+**Not built yet (v1):** the Settings window (then the menu shrinks to Settings… / Open alarm log / Exit), the Windows 10 pass.
+
+**Motion** runs on one main-window timer (about 60 frames per second) that exists only while a surface moves; each transition shows the frame it already has. The reconcilers stay declarative: a surface that should appear starts its drop, one that should go starts its retract, and the strip goes at once when the alarm takes over.
 
 **Threads:** UI (frontend + runtime + core), acquisition (runtime), and audio (only while sounding). Memory rule: no render target is kept between frames; SAPI lives only on the audio thread.
 
@@ -547,11 +550,12 @@ Known limits for that day, deliberately not built yet (YAGNI):
 - the cable guard and the alert ladder: caution strip and chime, advisories, cable notes
 - the simulator crate
 - the README (with the screenshots in `docs/img/`) and `AGENTS.md`
+- motion (DESIGN.md "Motion")
 - public on GitHub (0.3.7), CI and the release pipeline with build provenance (§10)
 
 **v1 — GitHub release:**
 - Settings window (DESIGN.md "Settings"); the menu shrinks
-- motion (DESIGN.md "Motion"); a Windows 10 pass
+- a Windows 10 pass
 - `psu-probe`; `docs/PROTOCOL.md`
 - acceptance: T3 coexistence run, T14–T21 lifecycle and floating, T23–T28 on real games
 
@@ -579,6 +583,7 @@ Known limits for that day, deliberately not built yet (YAGNI):
 
 | Version | Date | Changes |
 |---|---|---|
+| 3.2 | 2026-10-01 | Motion: `anim`, frames in `gfx`, the edge reveal, one animation timer (§7) |
 | 3.1 | 2026-10-01 | CI and the release pipeline: the read-only guard script, the pinned toolchain, draft releases with build provenance (§9, §10) |
 | 3 | 2026-10-01 | Rewritten to describe the system as built after the architecture review: core modules by spec section, the simulator crate, the Windows modules (`card`, `palette`, `edge`, `menu`), vendor words from the source (D18–D20), the full hidapi deny-list, status and roadmap |
 | 2.4 | 2026-10-01 | The cable guard (D15–D17), the alert ladder, cable notes and `state.toml` |

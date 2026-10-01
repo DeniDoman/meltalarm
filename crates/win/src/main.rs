@@ -6,6 +6,7 @@
 // Drawing primitives take position, size, color and alpha; a struct would add noise, not clarity.
 #![allow(clippy::too_many_arguments)]
 
+mod anim;
 mod audio;
 mod autostart;
 mod card;
@@ -53,6 +54,8 @@ const PBT_APMRESUMESUSPEND: u32 = 0x7;
 const PBT_APMRESUMEAUTOMATIC: u32 = 0x12;
 const TIMER_WAKE: usize = 1;
 const TIMER_BLINK: usize = 2;
+/// Runs only while something moves (DESIGN.md "Motion").
+const TIMER_ANIM: usize = 3;
 const HOTKEY_SNOOZE: i32 = 1;
 
 #[cfg(feature = "simulate")]
@@ -93,6 +96,8 @@ struct App {
     light: bool,
     blink_on: bool,
     blinking: bool,
+    /// The animation timer runs.
+    animating: bool,
     hotkey: bool,
     autostart_applied: Option<bool>,
     taskbar_created: u32,
@@ -168,7 +173,8 @@ impl App {
         self.popup.update(&self.gfx, &view, self.light);
         self.floating.sync(&self.gfx, &view, self.light);
         self.overlay.sync(&self.gfx, view.alarm.as_ref());
-        self.strip.sync(&self.gfx, view.caution.as_ref());
+        // The alarm takes over at once: the strip doesn't retract under the dropping notch.
+        self.strip.sync(&self.gfx, view.caution.as_ref(), view.alarm.is_some());
         self.audio.sync(view.audio.as_ref());
         if let Some(c) = &view.caution
             && self.chimed != Some(c.chime)
@@ -208,6 +214,23 @@ impl App {
             }
         }
         self.view = view;
+        self.animate();
+    }
+
+    /// Keep the animation timer running exactly while something moves.
+    fn animate(&mut self) {
+        let moving = self.popup.moving() || self.overlay.moving() || self.strip.moving();
+        if moving != self.animating {
+            // SAFETY: our own window.
+            unsafe {
+                if moving {
+                    SetTimer(Some(self.hwnd), TIMER_ANIM, anim::FRAME_MS, None);
+                } else {
+                    let _ = KillTimer(Some(self.hwnd), TIMER_ANIM);
+                }
+            }
+            self.animating = moving;
+        }
     }
 
     fn user(&mut self, a: UserAction) -> Option<Deferred> {
@@ -225,6 +248,13 @@ impl App {
             WM_TIMER if wp.0 == TIMER_WAKE => {
                 let u = self.runtime.wake(Instant::now());
                 (handled, self.after(u))
+            }
+            WM_TIMER if wp.0 == TIMER_ANIM => {
+                self.popup.tick();
+                self.overlay.tick();
+                self.strip.tick();
+                self.animate();
+                (handled, None)
             }
             WM_TIMER if wp.0 == TIMER_BLINK => {
                 self.blink_on = !self.blink_on;
@@ -336,7 +366,7 @@ impl App {
         let view = self.view.clone();
         let Some(c) = self.popup.shown(&view) else { return };
         let origin = self.popup.origin;
-        self.popup.hide();
+        self.popup.hide_now();
         self.floating.pop_out(&self.gfx, c, self.light, origin, tear_off);
     }
 
@@ -345,7 +375,7 @@ impl App {
         self.audio.stop();
         self.overlay.close();
         self.strip.close();
-        self.popup.hide();
+        self.popup.hide_now();
         self.tray.remove_all();
     }
 }
@@ -650,6 +680,7 @@ fn main() {
             light: sys::system_light(),
             blink_on: true,
             blinking: false,
+            animating: false,
             hotkey: false,
             autostart_applied: None,
             taskbar_created,

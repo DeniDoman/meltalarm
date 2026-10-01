@@ -49,23 +49,37 @@ impl Strips {
         Strips { windows: EdgeWindows::new(CLASS, WS_EX_TRANSPARENT, w!("MeltAlarm caution")), shown: None }
     }
 
-    /// Show/redraw for `caution`, or tear down when `None`.
-    pub fn sync(&mut self, gfx: &Gfx, caution: Option<&CautionView>) {
+    /// Show/redraw for `caution`. `None` retracts the strip, or removes it at once when the alarm
+    /// takes over (`superseded`, DESIGN.md "Motion").
+    pub fn sync(&mut self, gfx: &Gfx, caution: Option<&CautionView>, superseded: bool) {
         let Some(c) = caution else {
-            self.close();
+            self.windows.leave(superseded);
+            self.shown = None;
             return;
         };
+        let not_up = !self.windows.is_up();
         let recreated = self.windows.ensure();
-        if !recreated && self.shown.as_ref() == Some(c) {
-            return; // nothing changed: no redraw every second
+        if !recreated && !not_up && self.shown.as_ref() == Some(c) {
+            return; // nothing changed: no redraw every second, and a drop in progress goes on
         }
-        for win in &self.windows.wins {
+        for win in &mut self.windows.wins {
             let w = width(gfx, c, win.width_dip());
-            win.present(gfx, w, H, |p| draw(p, c, w));
+            win.render(gfx, w, H, |p| draw(p, c, w));
         }
+        self.windows.show();
         self.shown = Some(c.clone());
     }
 
+    /// One animation frame; `true` while the strip still moves.
+    pub fn tick(&mut self) -> bool {
+        self.windows.tick()
+    }
+
+    pub fn moving(&self) -> bool {
+        self.windows.moving()
+    }
+
+    /// Gone at once (exit).
     pub fn close(&mut self) {
         self.windows.close();
         self.shown = None;

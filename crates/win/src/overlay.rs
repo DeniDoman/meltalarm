@@ -31,25 +31,29 @@ impl Overlay {
         Overlay { windows, buttons: vec![], hover: None, hotkey_hint: true }
     }
 
+    /// Up and not leaving: the hotkey and the snooze button are live.
     pub fn visible(&self) -> bool {
-        !self.windows.is_empty()
+        self.windows.is_up()
     }
 
-    /// Show/redraw for `alarm`, or tear down when `None` (frees all rendering resources).
+    /// Show/redraw for `alarm`; `None` retracts the notch (DESIGN.md "Motion"). Red turns green
+    /// in one frame: a new view is simply drawn.
     pub fn sync(&mut self, gfx: &Gfx, alarm: Option<&AlarmView>) {
         let Some(a) = alarm else {
-            self.close();
+            self.windows.leave(false);
+            self.buttons.clear();
+            self.hover = None;
             return;
         };
         self.windows.ensure();
         let hint = self.hotkey_hint;
         self.buttons.clear();
-        for win in &self.windows.wins {
+        for win in &mut self.windows.wins {
             let width = notch_width(win.width_dip());
             let height = height(gfx, a, width);
             let hovered = self.hover == Some(win.hwnd);
             let mut button = None;
-            win.present(gfx, width, height, |p| button = draw(p, a, width, height, hovered, hint));
+            win.render(gfx, width, height, |p| button = draw(p, a, width, height, hovered, hint));
             self.buttons.push(button.map(|(bx, by, bw, bh)| RECT {
                 left: (bx * win.scale) as i32,
                 top: (by * win.scale) as i32,
@@ -57,17 +61,31 @@ impl Overlay {
                 bottom: ((by + bh) * win.scale) as i32,
             }));
         }
+        self.windows.show();
     }
 
+    /// The snooze button, once the notch has come to rest.
     pub fn hit_button(&self, hwnd: HWND, x: i32, y: i32) -> bool {
-        self.windows
-            .wins
-            .iter()
-            .position(|w| w.hwnd == hwnd)
-            .and_then(|i| self.buttons.get(i).copied().flatten())
-            .is_some_and(|b| x >= b.left && x < b.right && y >= b.top && y < b.bottom)
+        self.windows.at_rest()
+            && self
+                .windows
+                .wins
+                .iter()
+                .position(|w| w.hwnd == hwnd)
+                .and_then(|i| self.buttons.get(i).copied().flatten())
+                .is_some_and(|b| x >= b.left && x < b.right && y >= b.top && y < b.bottom)
     }
 
+    /// One animation frame; `true` while the notch still moves.
+    pub fn tick(&mut self) -> bool {
+        self.windows.tick()
+    }
+
+    pub fn moving(&self) -> bool {
+        self.windows.moving()
+    }
+
+    /// Gone at once (exit).
     pub fn close(&mut self) {
         self.windows.close();
         self.buttons.clear();

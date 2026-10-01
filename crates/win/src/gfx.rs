@@ -19,7 +19,7 @@ use windows::Win32::Graphics::DirectWrite::{
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
     AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CreateCompatibleDC,
-    CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, ReleaseDC, SelectObject,
+    CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, HBITMAP, HDC, HGDIOBJ, ReleaseDC, SelectObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{ULW_ALPHA, UpdateLayeredWindow};
 use windows::core::{Result, w};
@@ -118,11 +118,19 @@ impl Gfx {
 
     /// Render `w_dip × h_dip` at `scale` into the layered window `hwnd` at screen position (x, y) px.
     pub fn present(&self, hwnd: HWND, x: i32, y: i32, w_dip: f32, h_dip: f32, scale: f32, draw: impl FnOnce(&Painter)) -> Result<()> {
+        let frame = self.render(w_dip, h_dip, scale, draw)?;
+        frame.show(hwnd, (x, y), (0, 0, frame.w, frame.h), 255)
+    }
+
+    /// Render `w_dip × h_dip` at `scale` into a frame that can be shown, in part or translucent,
+    /// as often as needed (DESIGN.md "Motion": a transition shows one frame, never redraws it).
+    pub fn render(&self, w_dip: f32, h_dip: f32, scale: f32, draw: impl FnOnce(&Painter)) -> Result<Frame> {
         let (w, h) = ((w_dip * scale).ceil() as i32, (h_dip * scale).ceil() as i32);
-        // SAFETY: GDI objects are created, selected, used and released in this scope.
+        // SAFETY: GDI objects are created here and owned by the frame, which releases them on drop.
         unsafe {
             let screen = GetDC(None);
             let mem = CreateCompatibleDC(Some(screen));
+            ReleaseDC(None, screen);
             let bmi = BITMAPINFO {
                 bmiHeader: BITMAPINFOHEADER {
                     biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -136,49 +144,75 @@ impl Gfx {
                 ..Default::default()
             };
             let mut bits = std::ptr::null_mut();
-            let result = (|| -> Result<()> {
-                let dib = CreateDIBSection(Some(mem), &bmi, DIB_RGB_COLORS, &mut bits, None, 0)?;
-                let old = SelectObject(mem, dib.into());
-                let props = D2D1_RENDER_TARGET_PROPERTIES {
-                    r#type: D2D1_RENDER_TARGET_TYPE_SOFTWARE,
-                    pixelFormat: D2D1_PIXEL_FORMAT { format: DXGI_FORMAT_B8G8R8A8_UNORM, alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED },
-                    dpiX: 96.0,
-                    dpiY: 96.0,
-                    usage: D2D1_RENDER_TARGET_USAGE_NONE,
-                    minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
-                };
-                let rt: ID2D1DCRenderTarget = self.d2d.CreateDCRenderTarget(&props)?;
-                rt.BindDC(mem, &RECT { left: 0, top: 0, right: w, bottom: h })?;
-                rt.SetDpi(96.0 * scale, 96.0 * scale);
-                rt.BeginDraw();
-                rt.Clear(Some(&D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }));
-                draw(&Painter { gfx: self, rt: &rt });
-                let drawn = rt.EndDraw(None, None);
-                let blend = BLENDFUNCTION {
-                    BlendOp: AC_SRC_OVER as u8,
-                    BlendFlags: 0,
-                    SourceConstantAlpha: 255,
-                    AlphaFormat: AC_SRC_ALPHA as u8,
-                };
-                let shown = UpdateLayeredWindow(
-                    hwnd,
-                    Some(screen),
-                    Some(&POINT { x, y }),
-                    Some(&SIZE { cx: w, cy: h }),
-                    Some(mem),
-                    Some(&POINT { x: 0, y: 0 }),
-                    COLORREF(0),
-                    Some(&blend),
-                    ULW_ALPHA,
-                );
-                SelectObject(mem, old);
-                let _ = DeleteObject(dib.into());
-                drawn?;
-                shown
-            })();
-            let _ = DeleteDC(mem);
-            ReleaseDC(None, screen);
-            result
+            let dib = match CreateDIBSection(Some(mem), &bmi, DIB_RGB_COLORS, &mut bits, None, 0) {
+                Ok(dib) => dib,
+                Err(e) => {
+                    let _ = DeleteDC(mem);
+                    return Err(e);
+                }
+            };
+            let old = SelectObject(mem, dib.into());
+            let frame = Frame { mem, dib, old, w, h };
+            let props = D2D1_RENDER_TARGET_PROPERTIES {
+                r#type: D2D1_RENDER_TARGET_TYPE_SOFTWARE,
+                pixelFormat: D2D1_PIXEL_FORMAT { format: DXGI_FORMAT_B8G8R8A8_UNORM, alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED },
+                dpiX: 96.0,
+                dpiY: 96.0,
+                usage: D2D1_RENDER_TARGET_USAGE_NONE,
+                minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
+            };
+            let rt: ID2D1DCRenderTarget = self.d2d.CreateDCRenderTarget(&props)?;
+            rt.BindDC(mem, &RECT { left: 0, top: 0, right: w, bottom: h })?;
+            rt.SetDpi(96.0 * scale, 96.0 * scale);
+            rt.BeginDraw();
+            rt.Clear(Some(&D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }));
+            draw(&Painter { gfx: self, rt: &rt });
+            rt.EndDraw(None, None)?;
+            Ok(frame)
+        }
+    }
+}
+
+/// A rendered picture for a layered window (premultiplied BGRA), kept while it is on screen or
+/// moving, released on drop.
+pub struct Frame {
+    mem: HDC,
+    dib: HBITMAP,
+    old: HGDIOBJ,
+    /// Size in pixels.
+    pub w: i32,
+    pub h: i32,
+}
+
+impl Frame {
+    /// Show the part `src` (x, y, w, h in frame pixels) of this frame as the whole layered window
+    /// `hwnd`, its top-left at screen pixel `dst`, with a constant `alpha` on top of the per-pixel one.
+    pub fn show(&self, hwnd: HWND, dst: (i32, i32), src: (i32, i32, i32, i32), alpha: u8) -> Result<()> {
+        let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: alpha, AlphaFormat: AC_SRC_ALPHA as u8 };
+        // SAFETY: the memory DC and its bitmap live as long as `self`.
+        unsafe {
+            UpdateLayeredWindow(
+                hwnd,
+                None,
+                Some(&POINT { x: dst.0, y: dst.1 }),
+                Some(&SIZE { cx: src.2.max(1), cy: src.3.max(1) }),
+                Some(self.mem),
+                Some(&POINT { x: src.0, y: src.1 }),
+                COLORREF(0),
+                Some(&blend),
+                ULW_ALPHA,
+            )
+        }
+    }
+}
+
+impl Drop for Frame {
+    fn drop(&mut self) {
+        // SAFETY: we created both objects; the bitmap is deselected before it is deleted.
+        unsafe {
+            SelectObject(self.mem, self.old);
+            let _ = DeleteObject(self.dib.into());
+            let _ = DeleteDC(self.mem);
         }
     }
 }

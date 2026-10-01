@@ -13,7 +13,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::card::{HeaderButton, MARGIN, PAD, TOP, W, content_height, dismiss_rect, draw_card, draw_content, header_button_rect};
-use crate::gfx::Gfx;
+use crate::anim::{self, Motion, Transition};
+use crate::gfx::{Frame, Gfx};
 use crate::palette::theme;
 
 /// What a click in the flyout hits.
@@ -35,11 +36,14 @@ pub struct Popup {
     /// Where and at which DPI scale it was last drawn (window origin, px).
     pub origin: (i32, i32),
     pub scale: f32,
+    /// The last drawn picture, kept while it is open or fading (DESIGN.md "Motion").
+    frame: Option<Frame>,
+    motion: Motion,
 }
 
 impl Popup {
     pub fn new(hwnd: HWND) -> Self {
-        Popup { hwnd, connector: None, anchor: None, hidden_at: None, origin: (0, 0), scale: 1.0 }
+        Popup { hwnd, connector: None, anchor: None, hidden_at: None, origin: (0, 0), scale: 1.0, frame: None, motion: Motion::Still }
     }
 
     /// `x`, `y`: client pixels.
@@ -79,6 +83,8 @@ impl Popup {
             return;
         }
         self.connector = Some(key.clone());
+        // It rises from its icon and fades in (DESIGN.md "Motion").
+        self.motion = if anim::enabled() { Motion::In(Transition::new(anim::RISE)) } else { Motion::Still };
         // Freeze the anchor at open time (the cursor may move while the popup stays).
         self.anchor = anchor.or_else(|| {
             let mut p = POINT::default();
@@ -95,12 +101,63 @@ impl Popup {
         }
     }
 
+    /// Close: it fades out (or goes at once with Windows' animations off).
     pub fn hide(&mut self) {
         if let Some(k) = self.connector.take() {
             self.hidden_at = Some((k, Instant::now()));
-            // SAFETY: our own window.
-            unsafe { let _ = ShowWindow(self.hwnd, SW_HIDE); }
+            if anim::enabled() && self.frame.is_some() {
+                self.motion = Motion::Out(Transition::new(anim::FADE));
+                self.show_frame();
+            } else {
+                self.gone();
+            }
         }
+    }
+
+    /// Close at once: it turns into the floating view, or the app exits.
+    pub fn hide_now(&mut self) {
+        if let Some(k) = self.connector.take() {
+            self.hidden_at = Some((k, Instant::now()));
+        }
+        self.gone();
+    }
+
+    fn gone(&mut self) {
+        self.motion = Motion::Still;
+        self.frame = None;
+        // SAFETY: our own window.
+        unsafe { let _ = ShowWindow(self.hwnd, SW_HIDE); }
+    }
+
+    /// One animation frame; `true` while it still moves.
+    pub fn tick(&mut self) -> bool {
+        if !self.motion.moving() {
+            return false;
+        }
+        self.show_frame();
+        if self.motion.settle(Instant::now()) {
+            self.gone();
+        } else if !self.motion.moving() {
+            self.show_frame();
+        }
+        self.motion.moving()
+    }
+
+    pub fn moving(&self) -> bool {
+        self.motion.moving()
+    }
+
+    /// Show the frame as far as the motion has come: rising 8 DIP and fading in, or fading out.
+    fn show_frame(&self) {
+        let Some(frame) = &self.frame else { return };
+        let now = Instant::now();
+        let shown = self.motion.shown(now);
+        let rise = match self.motion {
+            Motion::In(_) => ((1.0 - shown) * anim::RISE_DIP * self.scale).round() as i32,
+            _ => 0,
+        };
+        let alpha = (shown * 255.0).round().clamp(0.0, 255.0) as u8;
+        let _ = frame.show(self.hwnd, (self.origin.0, self.origin.1 + rise), (0, 0, frame.w, frame.h), alpha);
     }
 
     pub fn update(&mut self, gfx: &Gfx, view: &ViewModel, light: bool) {
@@ -149,10 +206,14 @@ impl Popup {
 
         self.origin = (x, y);
         self.scale = scale;
-        let _ = gfx.present(self.hwnd, x, y, win_w, win_h, scale, |p| {
+        let frame = gfx.render(win_w, win_h, scale, |p| {
             let (cx, cy) = (MARGIN, MARGIN);
             draw_card(p, &t, cx, cy, card_w, card_h, t.border);
             draw_content(p, &t, c, cx + PAD, cy + TOP, card_w - 2.0 * PAD, HeaderButton::PopOut);
         });
+        if let Ok(frame) = frame {
+            self.frame = Some(frame);
+            self.show_frame();
+        }
     }
 }

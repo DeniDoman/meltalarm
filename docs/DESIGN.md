@@ -16,7 +16,7 @@ Principle: **quiet when fine, unmistakable when not.**
 | Popup visualization | **Cut bars** (2026-10-01): one bar per wire, its top is the alarm limit, cut straight across at the rating; a knee scale gives the decision range room. No limit lines, no labels, no wire numbers; the value sits under each bar. Mockups: https://claude.ai/artifact/J2r5BVZFm4CpT16r4W9GyT |
 | Names | "GPU power cable", numbered only when two are tracked or for an untracked one (Spec §7.0); "Imbalance", never "spread"; no total current. |
 | Fonts | Segoe UI Variable for UI text; Bahnschrift for numbers and the alarm (tabular figures). Both ship with Windows. |
-| Motion | Tray alarm blinks at 1 Hz. Locate pulse 0.6 s. Nothing else animates. *Designed, not built yet (v1):* popup 150 ms rise and fade; notch and caution strip 200 ms drop from the top edge. Until then they appear and disappear at once. |
+| Motion | Only a change of state moves, briefly; nothing moves at rest, data never animates. See "Motion" below. |
 | Alert ladder | Spec §8. **Alarm** = the red notch + alarm sound + voice. **Caution** = the amber strip + one chime. **Advisory** = a silent notification. **Status** = the attention marker. Each channel means exactly one level. |
 | Vocabulary | One set of state words on every surface: `OK`, `Caution`, `ALARM`, `No data`, `Not connected`. The PSU's own verdict appears only as information ("PSU status", "reported by the PSU"). |
 
@@ -165,6 +165,33 @@ One soft bell-like chime, **synthesized by MeltAlarm** so it doesn't depend on t
 - clearly not the alarm: one gentle note, against the alarm's harsh triple "Critical Stop" and the voice
 - played once per strip, at the current system volume
 
+## Motion
+
+Approved 2026-10-01 with a mockup: https://claude.ai/artifact/RBqQGfCdhzy1WRXE5hVuP6
+
+Where it comes from:
+- **Dark cockpit:** nothing moves while all is well; motion only marks a change of state.
+- **Master Warning / Master Caution:** warnings flash, cautions stay steady. Only the small tray icon blinks; nothing large ever flashes (photosensitivity, and it would fight the game).
+- **The instrument failure flag:** alerts drop out of the screen's top edge like the OFF flag falling into an attitude indicator.
+- **ECAM:** a new state is shown at once; red turns green in one frame.
+- **Apollo and Dragon panels:** data never animates. A bar jumps to each reading, like a digital readout; gliding would show values the PSU never measured.
+
+| Surface | Appears | Leaves |
+|---|---|---|
+| Alarm notch | drops from the top edge, 200 ms, decelerating | retracts upward, 150 ms, accelerating |
+| Caution strip | drops, 200 ms | retracts, 150 ms; **instantly** when the alarm takes over |
+| Red to green (cleared) | instant | — |
+| Tray window (flyout) | rises 8 DIP from its icon and fades in, 150 ms, decelerating | fades out, 100 ms; instantly when it turns into the floating view |
+| Bars, numbers, chips | never | — |
+| Tray icon in an alarm | blinks at 1 Hz | — |
+| Floating view | the locate pulse, 0.6 s | — |
+
+- **Entries decelerate, exits accelerate, nothing overshoots.** A bounce on an alarm reads as playful.
+- **Motion never delays the alarm.** Sound and voice start with the first frame.
+- **The drop is a reveal.** The surface is drawn once and slides out from behind the screen's edge, so it never spills onto a monitor stacked above.
+- **Windows' "Animation effects" setting** (Accessibility → Visual effects) turns all of it off: every change is instant.
+- A transition is about a dozen frames; nothing is drawn at rest.
+
 ## Rendering stack (constraint for the architecture)
 
 - Win32 windows with **Direct2D + DirectWrite in software mode** (software render target), so no GPU driver is loaded into the process.
@@ -175,6 +202,7 @@ One soft bell-like chime, **synthesized by MeltAlarm** so it doesn't depend on t
 
 | Date | Changes |
 |---|---|
+| 2026-10-01 | Motion: the drop, the rise, instant state changes, Windows' animation setting respected |
 | 2026-10-01 | Notch numbers one fact per line (no orphan words) |
 | 2026-10-01 | `Not connected` chip; Compact 250 wide with the short name `Cable 2` |
 | 2026-10-01 | Clean-up: the app icon that ships, motion marked as not built, rendering stack as built |
