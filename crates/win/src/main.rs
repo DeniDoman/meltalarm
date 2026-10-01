@@ -8,16 +8,18 @@
 
 mod audio;
 mod autostart;
+mod card;
+mod edge;
 mod floating;
 mod gfx;
 mod glyph;
 mod lifecycle;
+mod menu;
 mod paint;
+mod palette;
 mod placement;
 mod overlay;
 mod popup;
-#[cfg(feature = "simulate")]
-mod sim;
 mod strip;
 mod sys;
 mod tray;
@@ -39,7 +41,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_ESCAPE,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::core::{HSTRING, PCWSTR, w};
+use windows::core::{PCWSTR, w};
 
 const WM_WAKE: u32 = WM_APP + 2;
 const NIN_SELECT: u32 = WM_USER;
@@ -52,21 +54,11 @@ const PBT_APMRESUMEAUTOMATIC: u32 = 0x12;
 const TIMER_WAKE: usize = 1;
 const TIMER_BLINK: usize = 2;
 const HOTKEY_SNOOZE: i32 = 1;
-const OVERLAY_CLASS: PCWSTR = w!("MeltAlarmOverlay");
 
 #[cfg(feature = "simulate")]
 const APP_NAME: &str = "MeltAlarm (simulated)";
 #[cfg(not(feature = "simulate"))]
 const APP_NAME: &str = "MeltAlarm";
-
-const CMD_TRACK: u32 = 100;
-const CMD_ALARM: u32 = 200;
-const CMD_STARTUP: u32 = 201;
-const CMD_TEST: u32 = 202;
-const CMD_LOG: u32 = 203;
-const CMD_EXIT: u32 = 204;
-const CMD_INSTALL: u32 = 205;
-const CMD_UNINSTALL: u32 = 206;
 
 thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
@@ -171,11 +163,11 @@ impl App {
         }
         if self.popup_on_start && !view.connectors.is_empty() {
             self.popup_on_start = false;
-            self.popup.toggle(0, None, &self.gfx, &view, self.light);
+            self.popup.toggle(&view.connectors[0].key, None, &self.gfx, &view, self.light);
         }
         self.popup.update(&self.gfx, &view, self.light);
         self.floating.sync(&self.gfx, &view, self.light);
-        self.overlay.sync(&self.gfx, view.alarm.as_ref(), OVERLAY_CLASS);
+        self.overlay.sync(&self.gfx, view.alarm.as_ref());
         self.strip.sync(&self.gfx, view.caution.as_ref());
         self.audio.sync(view.audio.as_ref());
         if let Some(c) = &view.caution
@@ -244,15 +236,15 @@ impl App {
                 let id = ((lp.0 >> 16) & 0xFFFF) as u32;
                 match event {
                     NIN_SELECT | NIN_KEYSELECT => {
-                        let index = id.saturating_sub(1) as usize;
                         let view = self.view.clone();
-                        match view.connectors.get(index).filter(|c| self.floating.is_floating(&c.key.to_string())) {
+                        match view.connectors.iter().find(|c| tray::uid(&c.key) == id) {
                             // One view per connector: a floating one is located, not doubled (Spec §7.4).
-                            Some(c) => self.floating.locate(&self.gfx, c, self.light),
-                            None => {
+                            Some(c) if self.floating.is_floating(&c.key) => self.floating.locate(&self.gfx, c, self.light),
+                            Some(c) => {
                                 let rect = self.tray.icon_rect(id);
-                                self.popup.toggle(index, rect, &self.gfx, &view, self.light);
+                                self.popup.toggle(&c.key, rect, &self.gfx, &view, self.light);
                             }
+                            None => {}
                         }
                         (handled, None)
                     }
@@ -312,13 +304,11 @@ impl App {
     /// A second launch (Spec L6): open the popup of the first tracked connector.
     fn show(&mut self) {
         let view = self.view.clone();
-        match view.connectors.iter().position(|c| c.tracked) {
-            Some(i) if self.floating.is_floating(&view.connectors[i].key.to_string()) => {
-                self.floating.locate(&self.gfx, &view.connectors[i], self.light);
-            }
-            Some(i) if self.popup.connector != Some(i) => {
-                let rect = self.tray.icon_rect(tray::uid(i));
-                self.popup.toggle(i, rect, &self.gfx, &view, self.light);
+        match view.connectors.iter().find(|c| c.tracked) {
+            Some(c) if self.floating.is_floating(&c.key) => self.floating.locate(&self.gfx, c, self.light),
+            Some(c) if self.popup.connector.as_ref() != Some(&c.key) => {
+                let rect = self.tray.icon_rect(tray::uid(&c.key));
+                self.popup.toggle(&c.key, rect, &self.gfx, &view, self.light);
             }
             Some(_) => {}
             None => {
@@ -332,91 +322,22 @@ impl App {
     /// Bring a connector's view up: locate it if floating, otherwise open its flyout.
     fn open_connector(&mut self, key: &ConnectorKey) {
         let view = self.view.clone();
-        let Some(i) = view.connectors.iter().position(|c| &c.key == key) else { return };
-        if self.floating.is_floating(&key.to_string()) {
-            self.floating.locate(&self.gfx, &view.connectors[i], self.light);
-        } else if self.popup.connector != Some(i) {
-            let rect = if view.connectors[i].tracked { self.tray.icon_rect(tray::uid(i)) } else { None };
-            self.popup.toggle(i, rect, &self.gfx, &view, self.light);
+        let Some(c) = view.connectors.iter().find(|c| &c.key == key) else { return };
+        if self.floating.is_floating(key) {
+            self.floating.locate(&self.gfx, c, self.light);
+        } else if self.popup.connector.as_ref() != Some(key) {
+            let rect = if c.tracked { self.tray.icon_rect(tray::uid(key)) } else { None };
+            self.popup.toggle(key, rect, &self.gfx, &view, self.light);
         }
     }
 
     /// Flyout → floating view (Spec §7.4). `tear_off`: the header is being dragged.
     fn pop_out(&mut self, tear_off: bool) {
-        let Some(i) = self.popup.connector else { return };
         let view = self.view.clone();
-        let Some(c) = view.connectors.get(i) else { return };
+        let Some(c) = self.popup.shown(&view) else { return };
         let origin = self.popup.origin;
         self.popup.hide();
         self.floating.pop_out(&self.gfx, c, self.light, origin, tear_off);
-    }
-
-    fn build_menu(&self) -> Option<HMENU> {
-        let v = &self.view;
-        let tracked = v.tracked().count();
-        // SAFETY: menu handles are created here and destroyed by the caller.
-        unsafe {
-            let m = CreatePopupMenu().ok()?;
-            let add = |flags: MENU_ITEM_FLAGS, id: u32, text: &str| {
-                let _ = AppendMenuW(m, flags, id as usize, &HSTRING::from(text));
-            };
-            let check = |on: bool| if on { MF_CHECKED } else { MF_UNCHECKED };
-            let edition = if cfg!(feature = "simulate") { " (simulated)" } else if self.portable { " (not installed)" } else { "" };
-            add(MF_STRING | MF_GRAYED, 0, &format!("MeltAlarm {}{edition}", env!("CARGO_PKG_VERSION")));
-            let _ = AppendMenuW(m, MF_SEPARATOR, 0, PCWSTR::null());
-            for (i, c) in v.connectors.iter().enumerate() {
-                let grey = if c.tracked && tracked <= 1 { MF_GRAYED } else { MF_ENABLED };
-                let text = format!("Track {}  ({})", c.full_label, if c.present { "in use" } else { "no load" });
-                add(MF_STRING | check(c.tracked) | grey, CMD_TRACK + i as u32, &text);
-            }
-            let _ = AppendMenuW(m, MF_SEPARATOR, 0, PCWSTR::null());
-            add(MF_STRING | check(v.settings.alarm_enabled), CMD_ALARM, "Alerts (on screen, sound, voice)");
-            if !self.portable {
-                add(MF_STRING | check(v.settings.run_at_startup), CMD_STARTUP, "Run at Windows startup");
-            } else if cfg!(not(feature = "simulate")) {
-                add(MF_STRING, CMD_INSTALL, "Install…");
-            }
-            let _ = AppendMenuW(m, MF_SEPARATOR, 0, PCWSTR::null());
-            add(MF_STRING, CMD_TEST, "Test alarm");
-            add(MF_STRING, CMD_LOG, "Open alarm log");
-            let _ = AppendMenuW(m, MF_SEPARATOR, 0, PCWSTR::null());
-            if !self.portable {
-                add(MF_STRING, CMD_UNINSTALL, "Uninstall…");
-            }
-            add(MF_STRING, CMD_EXIT, "Exit");
-            Some(m)
-        }
-    }
-
-    fn on_command(&mut self, cmd: u32) -> Option<Deferred> {
-        let v = self.view.clone();
-        match cmd {
-            CMD_EXIT => Some(Deferred::ConfirmExit),
-            CMD_ALARM => self.user(UserAction::SetAlarmEnabled(!v.settings.alarm_enabled)),
-            CMD_STARTUP => self.user(UserAction::SetRunAtStartup(!v.settings.run_at_startup)),
-            CMD_TEST => self.user(UserAction::TestAlarm),
-            CMD_INSTALL | CMD_UNINSTALL => {
-                if let Err(e) = lifecycle::request(cmd == CMD_INSTALL) {
-                    sys::message(APP_NAME, &format!("Could not start the installer: {e}"), true);
-                }
-                None
-            }
-            CMD_LOG => {
-                let path = self.runtime.log_path().to_path_buf();
-                if path.exists() {
-                    sys::open_path(&path);
-                } else if let Some(dir) = path.parent() {
-                    let _ = std::fs::create_dir_all(dir);
-                    sys::open_path(dir);
-                }
-                None
-            }
-            c if (CMD_TRACK..CMD_TRACK + 16).contains(&c) => {
-                let c = v.connectors.get((c - CMD_TRACK) as usize)?;
-                self.user(UserAction::SetTracked(c.key.clone(), !c.tracked))
-            }
-            _ => None,
-        }
     }
 
     fn shutdown(&mut self) {
@@ -509,8 +430,7 @@ extern "system" fn popup_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> L
                 match a.popup_press.take() {
                     Some((_, _, popup::PopupHit::PopOut)) if hit == popup::PopupHit::PopOut => a.pop_out(false),
                     Some((_, _, popup::PopupHit::Dismiss)) if hit == popup::PopupHit::Dismiss => {
-                        if let Some(c) = a.popup.connector.and_then(|i| a.view.connectors.get(i)) {
-                            let key = c.key.clone();
+                        if let Some(key) = a.popup.connector.clone() {
                             a.user(UserAction::DismissNote(key));
                         }
                     }
@@ -538,7 +458,7 @@ extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
                 if hover != a.overlay.hover {
                     a.overlay.hover = hover;
                     let view = a.view.clone();
-                    a.overlay.sync(&a.gfx, view.alarm.as_ref(), OVERLAY_CLASS);
+                    a.overlay.sync(&a.gfx, view.alarm.as_ref());
                 }
             });
             return LRESULT(0);
@@ -547,7 +467,7 @@ extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
             with_app(|a| {
                 if a.overlay.hover.take().is_some() {
                     let view = a.view.clone();
-                    a.overlay.sync(&a.gfx, view.alarm.as_ref(), OVERLAY_CLASS);
+                    a.overlay.sync(&a.gfx, view.alarm.as_ref());
                 }
             });
             return LRESULT(0);
@@ -590,12 +510,7 @@ extern "system" fn float_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> L
     match action {
         Some((main, floating::Action::Menu(x, y))) => run_deferred(main, Deferred::Menu(x, y)),
         Some((_, floating::Action::Dismiss(key))) => {
-            with_app(|a| {
-                if let Some(c) = a.view.connectors.iter().find(|c| c.key.to_string() == key) {
-                    let key = c.key.clone();
-                    a.user(UserAction::DismissNote(key));
-                }
-            });
+            with_app(|a| a.user(UserAction::DismissNote(key)));
         }
         _ => {}
     }
@@ -672,7 +587,7 @@ fn main() {
 
     register_class(lifecycle::MAIN_CLASS, Some(main_proc));
     register_class(w!("MeltAlarmPopup"), Some(popup_proc));
-    register_class(OVERLAY_CLASS, Some(overlay_proc));
+    register_class(overlay::CLASS, Some(overlay_proc));
     register_class(floating::CLASS, Some(float_proc));
     register_class(strip::CLASS, Some(strip_proc));
 
@@ -703,7 +618,7 @@ fn main() {
     };
 
     #[cfg(feature = "simulate")]
-    let drivers: Vec<Box<dyn meltalarm_source_api::Driver>> = vec![Box::new(sim::SimDriver)];
+    let drivers: Vec<Box<dyn meltalarm_source_api::Driver>> = vec![Box::new(meltalarm_source_sim::SimDriver)];
     #[cfg(not(feature = "simulate"))]
     let drivers: Vec<Box<dyn meltalarm_source_api::Driver>> = vec![Box::new(meltalarm_source_msi::MsiDriver)];
 
@@ -728,7 +643,7 @@ fn main() {
             tray: tray::Tray::new(hwnd),
             popup: popup::Popup::new(popup_hwnd),
             overlay: overlay::Overlay::new(),
-            strip: strip::Strips::default(),
+            strip: strip::Strips::new(),
             audio: audio::Audio::default(),
             chimed: None,
             view,

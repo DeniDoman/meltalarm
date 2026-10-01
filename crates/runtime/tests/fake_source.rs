@@ -38,9 +38,9 @@ impl Source for FakeSource {
             protection: Some(Protection {
                 enabled: true,
                 wire_limit: Some(12.0),
-                spread_limit: Some(5.5),
+                imbalance_limit: Some(5.5),
                 wire_trigger: Some(Duration::from_secs(20)),
-                spread_trigger: Some(Duration::from_secs(20)),
+                imbalance_trigger: Some(Duration::from_secs(20)),
                 cutoff_after: Some(Duration::from_secs(180)),
                 hard_wire_limit: Some(18.0),
             }),
@@ -56,8 +56,9 @@ fn info() -> SourceInfo {
         model: "PSU".into(),
         firmware: None,
         serial: None,
-        connectors: vec![ConnectorInfo { index: 0, label: "12V-2x6 #1".into() }],
+        connectors: vec![ConnectorInfo { index: 0 }],
         caps: Capabilities { device_verdict: true, device_limits: true, cutoff_timer: true, wire_flags: false },
+        protection_name: None,
     }
 }
 

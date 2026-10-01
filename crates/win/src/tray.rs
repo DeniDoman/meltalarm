@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use meltalarm_core::ViewModel;
+use meltalarm_model::ConnectorKey;
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows::Win32::UI::Shell::{
@@ -34,9 +35,10 @@ pub enum Notice {
     Warning,
 }
 
-/// Tray icon id for a connector position in `ViewModel::connectors`.
-pub fn uid(index: usize) -> u32 {
-    index as u32 + 1
+/// Tray icon id of a connector: its number on the device (1, 2). Windows remembers "show on
+/// taskbar" per id, so the id must not depend on which connectors are tracked.
+pub fn uid(key: &ConnectorKey) -> u32 {
+    u32::from(key.index) + 1
 }
 
 /// The single "connecting…" icon shown before any source has connected. It reuses the first
@@ -68,9 +70,8 @@ impl Tray {
         let mut desired: Vec<(u32, Vec<u32>, String)> = view
             .connectors
             .iter()
-            .enumerate()
-            .filter(|(_, c)| c.tracked)
-            .map(|(i, c)| (uid(i), glyph::render(c, size, light, blink_on), c.tooltip.clone()))
+            .filter(|c| c.tracked)
+            .map(|c| (uid(&c.key), glyph::render(c, size, light, blink_on), c.tooltip.clone()))
             .collect();
         if let (true, Some(tip)) = (view.connectors.is_empty(), &view.connecting) {
             desired.push((PLACEHOLDER, glyph::render_placeholder(size, light), tip.clone()));

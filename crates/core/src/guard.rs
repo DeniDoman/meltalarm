@@ -35,8 +35,8 @@ pub enum GuardEvent {
     CautionStart { wire: usize, amps: f32 },
     CautionEnd { lasted: Duration, peak: (usize, f32) },
     /// Uneven load qualified (advisory). `low`: the wire carrying least; `high`: the most.
-    UnevenStart { spread: f32, avg: f32, low: (usize, f32), high: f32 },
-    UnevenEnd { lasted: Duration, peak_spread: f32 },
+    UnevenStart { imbalance: f32, avg: f32, low: (usize, f32), high: f32 },
+    UnevenEnd { lasted: Duration, peak_imbalance: f32 },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -215,14 +215,14 @@ impl Guard {
         if present.len() >= 2 {
             let low = present.iter().copied().min_by(|a, b| a.1.total_cmp(&b.1)).unwrap_or_default();
             let high = max.map_or(0.0, |m| m.1);
-            let spread = high - low.1;
+            let imbalance = high - low.1;
             let avg = present.iter().map(|p| p.1).sum::<f32>() / present.len() as f32;
             let loaded = avg >= UNEVEN_MIN_AVG;
-            let starts = loaded && spread >= l.uneven;
-            let hot = loaded && spread >= l.uneven - RELEASE_MARGIN;
-            match self.uneven.step(starts, hot, at, (low.0, spread)) {
-                Some(Step::Qualified) => events.push(GuardEvent::UnevenStart { spread, avg, low, high }),
-                Some(Step::Ended { lasted, peak }) => events.push(GuardEvent::UnevenEnd { lasted, peak_spread: peak.1 }),
+            let starts = loaded && imbalance >= l.uneven;
+            let hot = loaded && imbalance >= l.uneven - RELEASE_MARGIN;
+            match self.uneven.step(starts, hot, at, (low.0, imbalance)) {
+                Some(Step::Qualified) => events.push(GuardEvent::UnevenStart { imbalance, avg, low, high }),
+                Some(Step::Ended { lasted, peak }) => events.push(GuardEvent::UnevenEnd { lasted, peak_imbalance: peak.1 }),
                 None => {}
             }
         }
@@ -400,7 +400,7 @@ mod tests {
     #[test]
     fn uneven_load_is_told_after_10s_but_not_at_idle() {
         let mut f = Feed::new();
-        f.run(30, [0.1, 0.1, 0.1, 0.1, 0.1, 4.0]); // spread 3.9 A at idle-ish average: ignored
+        f.run(30, [0.1, 0.1, 0.1, 0.1, 0.1, 4.0]); // imbalance 3.9 A at idle-ish average: ignored
         assert!(f.events.is_empty());
         f.run(11, [0.5, 8.0, 8.0, 8.0, 8.0, 8.0]);
         assert!(matches!(f.events.as_slice(), [(_, GuardEvent::UnevenStart { low: (0, _), .. })]));

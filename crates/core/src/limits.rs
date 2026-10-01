@@ -22,7 +22,7 @@ pub struct Limits {
     pub fast: f32,
     /// Alarm on one reading at or above it.
     pub instant: f32,
-    /// Spread (max − min) that counts as uneven load.
+    /// Imbalance (max − min) that counts as uneven load.
     pub uneven: f32,
 }
 

@@ -178,9 +178,9 @@ impl Frame {
         Protection {
             enabled: self.0[3] == 1,
             wire_limit: Some(self.l11(4)),
-            spread_limit: Some(self.l11(6)),
+            imbalance_limit: Some(self.l11(6)),
             wire_trigger: secs(8),
-            spread_trigger: secs(9),
+            imbalance_trigger: secs(9),
             cutoff_after: secs(10),
             hard_wire_limit: Some(HARD_WIRE_LIMIT_A),
         }
@@ -303,7 +303,7 @@ pub(crate) mod tests {
 
         let p = ours(Reg::SafeguardConfig, C0_REF).protection();
         assert!(p.enabled);
-        assert_eq!((p.wire_limit, p.spread_limit), (Some(12.0), Some(5.5)));
+        assert_eq!((p.wire_limit, p.imbalance_limit), (Some(12.0), Some(5.5)));
         assert_eq!(p.wire_trigger, Some(Duration::from_secs(20)));
         assert_eq!(p.cutoff_after, Some(Duration::from_secs(180)));
 

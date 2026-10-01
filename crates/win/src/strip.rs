@@ -2,32 +2,20 @@
 //! little amber sibling at the top edge of every monitor. Click-through, never activates.
 
 use meltalarm_core::CautionView;
-use windows::Win32::Foundation::{HWND, RECT};
-use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SetWindowPos,
-    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
-};
+use windows::Win32::UI::WindowsAndMessaging::WS_EX_TRANSPARENT;
 use windows::core::{PCWSTR, w};
 
+use crate::edge::EdgeWindows;
 use crate::gfx::{self, Align, Gfx, Painter, num, ui};
-use crate::overlay::monitors;
+use crate::palette::{ALERT_BODY as BODY, CAUTION_DARK as AMBER};
 
 pub const CLASS: PCWSTR = w!("MeltAlarmStrip");
-const AMBER: u32 = 0xF5A623;
-const BODY: u32 = 0x0F0F10;
 const H: f32 = 40.0;
 const SIDE: f32 = 24.0;
 const ICON: f32 = 18.0;
 
-struct Win {
-    hwnd: HWND,
-    monitor: RECT,
-    scale: f32,
-}
-
-#[derive(Default)]
 pub struct Strips {
-    wins: Vec<Win>,
+    windows: EdgeWindows,
     shown: Option<CautionView>,
 }
 
@@ -56,62 +44,30 @@ fn width(gfx: &Gfx, c: &CautionView, monitor_w: f32) -> f32 {
 }
 
 impl Strips {
+    pub fn new() -> Self {
+        // Click-through: the strip never catches the mouse (Spec §8.8).
+        Strips { windows: EdgeWindows::new(CLASS, WS_EX_TRANSPARENT, w!("MeltAlarm caution")), shown: None }
+    }
+
     /// Show/redraw for `caution`, or tear down when `None`.
     pub fn sync(&mut self, gfx: &Gfx, caution: Option<&CautionView>) {
         let Some(c) = caution else {
             self.close();
             return;
         };
-        let mons = monitors();
-        let same_monitors = self.wins.len() == mons.len() && self.wins.iter().zip(&mons).all(|(w, (r, s))| w.monitor == *r && w.scale == *s);
-        if same_monitors && self.shown.as_ref() == Some(c) {
+        let recreated = self.windows.ensure();
+        if !recreated && self.shown.as_ref() == Some(c) {
             return; // nothing changed: no redraw every second
         }
-        if !same_monitors {
-            self.close();
-            for (r, s) in mons {
-                // SAFETY: plain window creation with our registered class.
-                let hwnd = unsafe {
-                    CreateWindowExW(
-                        WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
-                        CLASS,
-                        w!("MeltAlarm caution"),
-                        WS_POPUP,
-                        0,
-                        0,
-                        0,
-                        0,
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
-                };
-                if let Ok(hwnd) = hwnd {
-                    self.wins.push(Win { hwnd, monitor: r, scale: s });
-                }
-            }
-        }
-        for win in &self.wins {
-            let mw = (win.monitor.right - win.monitor.left) as f32 / win.scale;
-            let w = width(gfx, c, mw);
-            let x = win.monitor.left + (((mw - w) / 2.0) * win.scale) as i32;
-            let _ = gfx.present(win.hwnd, x, win.monitor.top, w, H, win.scale, |p| draw(p, c, w));
-            // SAFETY: our own window; games can push windows back, so re-assert topmost.
-            unsafe {
-                let _ = SetWindowPos(win.hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-            }
+        for win in &self.windows.wins {
+            let w = width(gfx, c, win.width_dip());
+            win.present(gfx, w, H, |p| draw(p, c, w));
         }
         self.shown = Some(c.clone());
     }
 
     pub fn close(&mut self) {
-        for w in self.wins.drain(..) {
-            // SAFETY: our own window.
-            unsafe {
-                let _ = DestroyWindow(w.hwnd);
-            }
-        }
+        self.windows.close();
         self.shown = None;
     }
 }

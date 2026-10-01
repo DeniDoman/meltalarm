@@ -1,4 +1,4 @@
-//! Settings file and alarm log file. Failures never stop monitoring.
+//! Settings, state and alarm log files. Failures never stop monitoring.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -7,6 +7,18 @@ use std::path::{Path, PathBuf};
 use meltalarm_core::{CoreState, Settings};
 
 const LOG_ROTATE_BYTES: u64 = 5 * 1024 * 1024;
+
+/// Write `text` to `path` atomically: a temp file next to it, then a rename over the old one.
+/// Creates the folder. Failures are ignored: a file that can't be written never stops monitoring.
+pub fn write_atomic(path: &Path, text: &str) {
+    if let Some(dir) = path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let tmp = path.with_extension("tmp");
+    if fs::write(&tmp, text).is_ok() {
+        let _ = fs::rename(&tmp, path);
+    }
+}
 
 pub struct SettingsStore {
     path: PathBuf,
@@ -21,15 +33,8 @@ impl SettingsStore {
         fs::read_to_string(&self.path).map(|t| Settings::from_file(&t)).unwrap_or_default()
     }
 
-    /// Atomic: write a temp file, then rename over the old one.
     pub fn save(&self, s: &Settings) {
-        if let Some(dir) = self.path.parent() {
-            let _ = fs::create_dir_all(dir);
-        }
-        let tmp = self.path.with_extension("toml.tmp");
-        if fs::write(&tmp, s.to_file()).is_ok() {
-            let _ = fs::rename(&tmp, &self.path);
-        }
+        write_atomic(&self.path, &s.to_file());
     }
 }
 
@@ -47,15 +52,8 @@ impl StateStore {
         fs::read_to_string(&self.path).map(|t| CoreState::from_file(&t)).unwrap_or_default()
     }
 
-    /// Atomic, like the settings.
     pub fn save(&self, s: &CoreState) {
-        if let Some(dir) = self.path.parent() {
-            let _ = fs::create_dir_all(dir);
-        }
-        let tmp = self.path.with_extension("toml.tmp");
-        if fs::write(&tmp, s.to_file()).is_ok() {
-            let _ = fs::rename(&tmp, &self.path);
-        }
+        write_atomic(&self.path, &s.to_file());
     }
 }
 

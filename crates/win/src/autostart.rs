@@ -61,7 +61,7 @@ fn create(exe: &Path) -> Result<(), String> {
     let xml = format!(
         r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>MeltAlarm: 12V-2x6 GPU cable monitor for MSI Ai1x00TS PSUs</Description></RegistrationInfo>
+  <RegistrationInfo><Description>MeltAlarm: GPU power cable monitor</Description></RegistrationInfo>
   <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>{user}</UserId></LogonTrigger></Triggers>
   <Principals><Principal id="Author"><UserId>{user}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
   <Settings>

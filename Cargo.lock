@@ -126,6 +126,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "meltalarm-source-sim"
+version = "0.3.2"
+dependencies = [
+ "meltalarm-model",
+ "meltalarm-source-api",
+]
+
+[[package]]
 name = "meltalarm-win"
 version = "0.3.2"
 dependencies = [
@@ -135,6 +143,7 @@ dependencies = [
  "meltalarm-runtime",
  "meltalarm-source-api",
  "meltalarm-source-msi",
+ "meltalarm-source-sim",
  "windows",
  "windows-numerics",
 ]

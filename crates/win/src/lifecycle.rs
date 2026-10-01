@@ -61,7 +61,7 @@ pub const IN_ALARM: isize = 2;
 const STOP_GRACE: Duration = Duration::from_secs(5);
 const UNINSTALL_KEY: PCWSTR = w!("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MeltAlarm");
 const TITLE: &str = "MeltAlarm";
-const ALARM_ACTIVE: &str = "A PSU alarm is active. Update MeltAlarm after the alarm has cleared.";
+const ALARM_ACTIVE: &str = "A cable alarm is active. Update MeltAlarm after it has cleared.";
 
 pub fn control_message() -> u32 {
     // SAFETY: static string.

@@ -4,10 +4,11 @@
 use meltalarm_core::{ConnectorView, Glyph, Level, WireView};
 
 use crate::paint::Canvas;
+use crate::palette::{ALARM_RED, CAUTION_DARK, CAUTION_LIGHT, WARNING_DARK, WARNING_LIGHT};
 use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, HICON, ICONINFO};
 
-pub const RED_TILE: u32 = 0xC8102E;
+/// The overloaded or flagged wire, knocked out of the white squares on the red alarm tile.
 const KNOCKOUT: u32 = 0x5A0010;
 
 pub struct Palette {
@@ -18,9 +19,9 @@ pub struct Palette {
 
 pub fn palette(light_taskbar: bool) -> Palette {
     if light_taskbar {
-        Palette { neutral: 0x1B1B1B, caution: 0xB86E00, warning: 0xD1242F }
+        Palette { neutral: 0x1B1B1B, caution: CAUTION_LIGHT, warning: WARNING_LIGHT }
     } else {
-        Palette { neutral: 0xF2F2F2, caution: 0xF5A623, warning: 0xFF4D4F }
+        Palette { neutral: 0xF2F2F2, caution: CAUTION_DARK, warning: WARNING_DARK }
     }
 }
 
@@ -49,7 +50,7 @@ fn draw(glyph: Glyph, wires: &[WireView; 6], attention: bool, size: i32, light: 
 
     let mut cv = Canvas::new(size);
     if tile {
-        cv.rrect(0.0, 0.0, s, s, s / 5.0, RED_TILE, 1.0, None);
+        cv.rrect(0.0, 0.0, s, s, s / 5.0, ALARM_RED, 1.0, None);
     }
     for (i, w) in wires.iter().enumerate() {
         let x = ox + (i % 3) as f32 * (cell + gap);

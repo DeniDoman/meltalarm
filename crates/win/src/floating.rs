@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 
 use meltalarm_core::{ConnectorView, Level, ViewModel};
+use meltalarm_model::ConnectorKey;
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent};
@@ -18,7 +19,8 @@ use windows::core::{PCWSTR, w};
 
 use crate::gfx::{Align, Gfx, Painter, num};
 use crate::placement::{self, Layout, Placement, Placements};
-use crate::popup::{self, HeaderButton, MARGIN, PAD, TOP, Theme};
+use crate::card::{self, HeaderButton, MARGIN, PAD, TOP};
+use crate::palette::{self, Theme, level_colors};
 
 pub const CLASS: PCWSTR = w!("MeltAlarmFloat");
 const COMPACT: (f32, f32) = (220.0, 152.0);
@@ -69,19 +71,19 @@ pub enum Action {
     None,
     /// Show the tray menu at this screen point.
     Menu(i32, i32),
-    /// Dismiss the cable note of this connector (key string).
-    Dismiss(String),
+    /// Dismiss the cable note of this connector.
+    Dismiss(ConnectorKey),
 }
 
 pub struct Floating {
-    wins: HashMap<String, Win>,
+    wins: HashMap<ConnectorKey, Win>,
     places: Placements,
 }
 
 fn card_size(gfx: &Gfx, c: &ConnectorView, layout: Layout) -> (f32, f32) {
     match layout {
         Layout::Compact => COMPACT,
-        Layout::Full => (popup::W, popup::content_height(gfx, c)),
+        Layout::Full => (card::W, card::content_height(gfx, c)),
     }
 }
 
@@ -99,11 +101,11 @@ impl Floating {
         Floating { wins: HashMap::new(), places }
     }
 
-    pub fn is_floating(&self, key: &str) -> bool {
+    pub fn is_floating(&self, key: &ConnectorKey) -> bool {
         self.wins.contains_key(key)
     }
 
-    fn key_of(&self, hwnd: HWND) -> Option<String> {
+    fn key_of(&self, hwnd: HWND) -> Option<ConnectorKey> {
         self.wins.iter().find(|(_, w)| w.hwnd == hwnd).map(|(k, _)| k.clone())
     }
 
@@ -112,32 +114,31 @@ impl Floating {
     pub fn sync(&mut self, gfx: &Gfx, view: &ViewModel, light: bool) {
         let mut forget = false;
         for c in view.connectors.iter().filter(|c| !c.tracked) {
-            let key = c.key.to_string();
-            self.destroy(&key);
-            forget |= self.places.map.remove(&key).is_some();
+            self.destroy(&c.key);
+            forget |= self.places.map.remove(&c.key).is_some();
         }
         if forget {
             self.places.save();
         }
-        let stale: Vec<String> = self
+        let stale: Vec<ConnectorKey> = self
             .wins
             .keys()
-            .filter(|k| !view.connectors.iter().any(|c| c.tracked && &c.key.to_string() == *k))
+            .filter(|k| !view.connectors.iter().any(|c| c.tracked && &c.key == *k))
             .cloned()
             .collect();
         for k in stale {
             self.destroy(&k);
         }
-        let wanted: Vec<String> = self.places.map.iter().filter(|(_, p)| p.floating).map(|(k, _)| k.clone()).collect();
+        let wanted: Vec<ConnectorKey> = self.places.map.iter().filter(|(_, p)| p.floating).map(|(k, _)| k.clone()).collect();
         for key in wanted {
-            if let Some(c) = view.connectors.iter().find(|c| c.tracked && c.key.to_string() == key) {
+            if let Some(c) = view.connectors.iter().find(|c| c.tracked && c.key == key) {
                 self.show(gfx, c, light, &key);
             }
         }
     }
 
     /// Create the window if needed (at its saved placement) and draw it.
-    fn show(&mut self, gfx: &Gfx, c: &ConnectorView, light: bool, key: &str) {
+    fn show(&mut self, gfx: &Gfx, c: &ConnectorView, light: bool, key: &ConnectorKey) {
         let Some(place) = self.places.map.get(key).cloned() else { return };
         if !self.wins.contains_key(key) {
             let disp = placement::find(&place.display);
@@ -162,7 +163,7 @@ impl Floating {
                 return;
             };
             let win = Win { hwnd, pos, scale: disp.dpi, size: (0, 0), hover: false, pulse: false, pressed: None, drag: None };
-            self.wins.insert(key.to_owned(), win);
+            self.wins.insert(key.clone(), win);
             self.render(gfx, c, light, key, &place, None);
             // SAFETY: our own window.
             unsafe {
@@ -189,7 +190,7 @@ impl Floating {
 
     /// Draw at the window's position, clamped fully onto its display. `anchor`: keep this
     /// corner (px) fixed while scaling (-1/+1 per axis: which edge moves).
-    fn render(&mut self, gfx: &Gfx, c: &ConnectorView, light: bool, key: &str, place: &Placement, anchor: Option<(i8, i8, RECT)>) {
+    fn render(&mut self, gfx: &Gfx, c: &ConnectorView, light: bool, key: &ConnectorKey, place: &Placement, anchor: Option<(i8, i8, RECT)>) {
         let Some(win) = self.wins.get_mut(key) else { return };
         let (cw, ch) = card_size(gfx, c, place.layout);
         let (ww, wh) = (cw + 2.0 * MARGIN, ch + 2.0 * MARGIN);
@@ -217,16 +218,16 @@ impl Floating {
         win.pos = (x, y);
         win.scale = scale;
         win.size = (w, h);
-        let t = popup::theme(light);
+        let t = palette::theme(light);
         let (hover, pulse) = (win.hover || win.drag.is_some(), win.pulse);
         let hwnd = win.hwnd;
-        let _ = gfx.present(hwnd, x, y, ww, wh, scale, |p| paint(p, &t, c, place.layout, cw, ch, hover, pulse, light));
+        let _ = gfx.present(hwnd, x, y, ww, wh, scale, |p| paint(p, &t, c, place.layout, cw, ch, hover, pulse));
     }
 
     /// Flyout → floating (pop-out button, or `tear_off` = dragging its header). The first time,
     /// and when torn off, *Full* at the flyout's spot; otherwise the last floating placement.
     pub fn pop_out(&mut self, gfx: &Gfx, c: &ConnectorView, light: bool, origin: (i32, i32), tear_off: bool) {
-        let key = c.key.to_string();
+        let key = c.key.clone();
         let restore = !tear_off && self.places.map.get(&key).is_some_and(|p| !p.display.is_empty());
         if restore {
             if let Some(p) = self.places.map.get_mut(&key) {
@@ -260,7 +261,7 @@ impl Floating {
 
     /// Tray click while floating: bring to front, back onto a display, pulse once.
     pub fn locate(&mut self, gfx: &Gfx, c: &ConnectorView, light: bool) {
-        let key = c.key.to_string();
+        let key = c.key.clone();
         let Some(win) = self.wins.get_mut(&key) else { return };
         win.pulse = true;
         let hwnd = win.hwnd;
@@ -274,7 +275,7 @@ impl Floating {
         }
     }
 
-    fn destroy(&mut self, key: &str) {
+    fn destroy(&mut self, key: &ConnectorKey) {
         if let Some(w) = self.wins.remove(key) {
             // SAFETY: our own window.
             unsafe {
@@ -285,14 +286,14 @@ impl Floating {
 
     /// App exit: close the windows, keep the placements (restored at the next start).
     pub fn close_all(&mut self) {
-        let keys: Vec<String> = self.wins.keys().cloned().collect();
+        let keys: Vec<ConnectorKey> = self.wins.keys().cloned().collect();
         for k in keys {
             self.destroy(&k);
         }
     }
 
     /// Remember where the window is now.
-    fn save_position(&mut self, key: &str) {
+    fn save_position(&mut self, key: &ConnectorKey) {
         let Some(win) = self.wins.get(key) else { return };
         let r = RECT { left: win.pos.0, top: win.pos.1, right: win.pos.0 + win.size.0, bottom: win.pos.1 + win.size.1 };
         let disp = placement::display_of(&r);
@@ -305,7 +306,7 @@ impl Floating {
         self.places.save();
     }
 
-    fn hit(&self, gfx: &Gfx, c: &ConnectorView, key: &str, client: POINT) -> Hit {
+    fn hit(&self, gfx: &Gfx, c: &ConnectorView, key: &ConnectorKey, client: POINT) -> Hit {
         let (Some(win), Some(place)) = (self.wins.get(key), self.places.map.get(key)) else { return Hit::Nothing };
         let (cw, ch) = card_size(gfx, c, place.layout);
         let (x, y) = (client.x as f32 / win.scale - MARGIN, client.y as f32 / win.scale - MARGIN);
@@ -317,7 +318,7 @@ impl Floating {
             return Hit::Tab;
         }
         if place.layout == Layout::Full
-            && let Some((dx, dy, dw, dh)) = popup::dismiss_rect(gfx, c, cw - 2.0 * PAD)
+            && let Some((dx, dy, dw, dh)) = card::dismiss_rect(gfx, c, cw - 2.0 * PAD)
             && inside((PAD + dx, TOP + dy, dw, dh))
         {
             return Hit::Dismiss;
@@ -337,7 +338,7 @@ impl Floating {
         };
         const WM_MOUSELEAVE: u32 = 0x02A3;
         let Some(key) = self.key_of(hwnd) else { return Action::None };
-        let Some(c) = view.connectors.iter().find(|c| c.key.to_string() == key) else { return Action::None };
+        let Some(c) = view.connectors.iter().find(|c| c.key == key) else { return Action::None };
         let Some(place) = self.places.map.get(&key).cloned() else { return Action::None };
         let Some(win) = self.wins.get(&key) else { return Action::None };
         let (drag, pos, size, scale) = (win.drag, win.pos, win.size, win.scale);
@@ -494,7 +495,7 @@ impl Floating {
         Action::None
     }
 
-    fn end_drag(&mut self, gfx: &Gfx, c: &ConnectorView, light: bool, key: &str) {
+    fn end_drag(&mut self, gfx: &Gfx, c: &ConnectorView, light: bool, key: &ConnectorKey) {
         let Some(w) = self.wins.get_mut(key) else { return };
         if w.drag.take().is_none() {
             return;
@@ -514,7 +515,7 @@ impl Floating {
 fn close_rect(layout: Layout, cw: f32) -> (f32, f32, f32, f32) {
     match layout {
         Layout::Compact => (cw - 8.0 - 24.0, 8.0, 24.0, 24.0),
-        Layout::Full => popup::header_button_rect(PAD, TOP, cw - 2.0 * PAD),
+        Layout::Full => card::header_button_rect(PAD, TOP, cw - 2.0 * PAD),
     }
 }
 
@@ -522,20 +523,20 @@ fn tab_rect(cw: f32, ch: f32) -> (f32, f32, f32, f32) {
     (cw / 2.0 - 18.0, ch - 9.0, 36.0, 18.0)
 }
 
-fn paint(p: &Painter, t: &Theme, c: &ConnectorView, layout: Layout, cw: f32, ch: f32, hover: bool, pulse: bool, light: bool) {
+fn paint(p: &Painter, t: &Theme, c: &ConnectorView, layout: Layout, cw: f32, ch: f32, hover: bool, pulse: bool) {
     let (x, y) = (MARGIN, MARGIN);
-    let (accent, hover_border, tab_bg) = if light { (0x005FB8, 0xB0B0B0, 0xFFFFFF) } else { (0x4CC2FF, 0x555555, 0x333333) };
-    popup::draw_card(p, t, x, y, cw, ch, if hover { hover_border } else { t.border });
+    let (accent, hover_border, tab_bg) = (t.accent, t.hover_border, t.tab_bg);
+    card::draw_card(p, t, x, y, cw, ch, if hover { hover_border } else { t.border });
     match layout {
         Layout::Full => {
             let button = if hover { HeaderButton::Close } else { HeaderButton::None };
-            popup::draw_content(p, t, c, x + PAD, y + TOP, cw - 2.0 * PAD, button);
+            card::draw_content(p, t, c, x + PAD, y + TOP, cw - 2.0 * PAD, button);
         }
         Layout::Compact => {
             draw_compact(p, t, c, x, y);
             if hover {
                 let (bx, by, bw, bh) = close_rect(layout, cw);
-                popup::draw_close(p, t, x + bx, y + by, bw, bh);
+                card::draw_close(p, t, x + bx, y + by, bw, bh);
             }
         }
     }
@@ -562,18 +563,18 @@ fn paint(p: &Painter, t: &Theme, c: &ConnectorView, layout: Layout, cw: f32, ch:
 
 /// DESIGN.md "Floating monitor", Compact: 220 × 152, fixed in every state.
 fn draw_compact(p: &Painter, t: &Theme, c: &ConnectorView, x: f32, y: f32) {
-    popup::draw_title(p, t, c, x + 14.0, y + 12.0, true);
+    card::draw_title(p, t, c, x + 14.0, y + 12.0, true);
     let y0 = y + 40.0;
     let bar_h = 56.0;
     let stale = if c.stale { 0.45 } else { 1.0 };
     for (i, wv) in c.wires.iter().enumerate() {
         let cx = x + 30.0 + i as f32 * 32.0;
-        let (bar, txt) = popup::level_colors(t, wv.level);
-        popup::draw_cut_bar(p, cx - 5.0, y0, 10.0, bar_h, wv.amps, c.bar_limit, c.caution_line, t.track, bar, stale, t.fg3);
+        let (bar, txt) = level_colors(t, wv.level);
+        card::draw_cut_bar(p, cx - 5.0, y0, 10.0, bar_h, wv.amps, c.bar_limit, c.bar_rating, t.track, bar, stale, t.fg3);
         let value = wv.amps.map_or("—".to_owned(), |a| format!("{a:.1}"));
         let color = if wv.amps.is_some() { txt } else { t.fg3 };
         p.text(&value, num(13.0, 600), cx - 16.0, y0 + bar_h + 4.0, 32.0, 17.0, color, stale, Align::Center);
     }
-    let color = if c.summary_level == Level::Normal { t.fg3 } else { popup::level_colors(t, c.summary_level).1 };
+    let color = if c.summary_level == Level::Normal { t.fg3 } else { level_colors(t, c.summary_level).1 };
     p.text(&c.summary, num(12.0, 400), x + 14.0, y + 125.0, COMPACT.0 - 28.0, 15.0, color, 1.0, Align::Left);
 }

@@ -78,8 +78,9 @@ impl MsiSource {
             model,
             firmware: text(Reg::MfrRevision).ok().filter(|s| !s.is_empty()),
             serial: text(Reg::MfrSerial).ok().filter(|s| !s.is_empty()),
-            connectors: (0..2).map(|i| ConnectorInfo { index: i, label: format!("12V-2x6 #{}", i + 1) }).collect(),
+            connectors: (0..2).map(|i| ConnectorInfo { index: i }).collect(),
             caps: Capabilities { device_verdict: true, device_limits: true, cutoff_timer: true, wire_flags: true },
+            protection_name: Some("Safeguard+".into()),
         };
         Ok(MsiSource { device, lock, info, last_config: None })
     }

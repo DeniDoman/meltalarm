@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
+use meltalarm_model::ConnectorKey;
 use windows::Win32::Foundation::{LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
     DISPLAY_DEVICEW, EnumDisplayDevicesW, EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITOR_DEFAULTTONEAREST,
@@ -43,7 +44,7 @@ impl Placement {
 
 pub struct Placements {
     path: PathBuf,
-    pub map: BTreeMap<String, Placement>,
+    pub map: BTreeMap<ConnectorKey, Placement>,
 }
 
 impl Placements {
@@ -54,17 +55,11 @@ impl Placements {
 
     /// Atomic, like the settings file. Failures are ignored: placement is a convenience.
     pub fn save(&self) {
-        if let Some(dir) = self.path.parent() {
-            let _ = fs::create_dir_all(dir);
-        }
-        let tmp = self.path.with_extension("toml.tmp");
-        if fs::write(&tmp, format(&self.map)).is_ok() {
-            let _ = fs::rename(&tmp, &self.path);
-        }
+        meltalarm_runtime::write_atomic(&self.path, &format(&self.map));
     }
 }
 
-fn format(map: &BTreeMap<String, Placement>) -> String {
+fn format(map: &BTreeMap<ConnectorKey, Placement>) -> String {
     let mut s = String::from("# MeltAlarm floating monitor placement. Delete this file to reset.\n");
     for (key, p) in map {
         s.push_str(&format!(
@@ -81,18 +76,18 @@ fn format(map: &BTreeMap<String, Placement>) -> String {
     s
 }
 
-/// Lenient: unknown keys, broken lines and incomplete sections are ignored.
-fn parse(text: &str) -> BTreeMap<String, Placement> {
+/// Lenient: unknown keys, broken lines, incomplete sections and unknown connectors are ignored.
+fn parse(text: &str) -> BTreeMap<ConnectorKey, Placement> {
     let mut map = BTreeMap::new();
-    let mut current: Option<(String, Placement)> = None;
+    let mut current: Option<(Option<ConnectorKey>, Placement)> = None;
     let num = |v: &str| v.parse::<f32>().ok().filter(|f| f.is_finite());
     for line in text.lines().map(str::trim) {
         if let Some(key) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            if let Some((k, p)) = current.take() {
+            if let Some((Some(k), p)) = current.take() {
                 map.insert(k, p);
             }
             let p = Placement { floating: false, layout: Layout::Full, scale: [1.0, 1.0], display: String::new(), x: 0.0, y: 0.0 };
-            current = Some((key.to_owned(), p));
+            current = Some((ConnectorKey::parse(key), p));
             continue;
         }
         let (Some((_, p)), Some((k, v))) = (current.as_mut(), line.split_once('=')) else { continue };
@@ -108,7 +103,7 @@ fn parse(text: &str) -> BTreeMap<String, Placement> {
             _ => {}
         }
     }
-    if let Some((k, p)) = current {
+    if let Some((Some(k), p)) = current {
         map.insert(k, p);
     }
     map
@@ -183,9 +178,10 @@ mod tests {
 
     #[test]
     fn placement_file_round_trips_and_tolerates_junk() {
+        let key = |s: &str| ConnectorKey::parse(s).unwrap();
         let mut map = BTreeMap::new();
         map.insert(
-            "msi:ai1300ts:1".to_owned(),
+            key("msi:ai1300ts:1"),
             Placement {
                 floating: true,
                 layout: Layout::Compact,
@@ -197,10 +193,11 @@ mod tests {
         );
         let text = format(&map);
         assert_eq!(parse(&text), map);
-        let junk = format!("garbage\nx = 5\n{text}\n[msi:ai1300ts:2]\nscale_full = NaN\nwhat\n");
+        let junk = format!("garbage\nx = 5\n{text}\n[msi:ai1300ts:2]\nscale_full = NaN\nwhat\n[nonsense]\nx = 1\n");
         let parsed = parse(&junk);
-        assert_eq!(parsed["msi:ai1300ts:1"], map["msi:ai1300ts:1"]);
-        assert_eq!(parsed["msi:ai1300ts:2"].scale, [1.0, 1.0]);
-        assert!(!parsed["msi:ai1300ts:2"].floating);
+        assert_eq!(parsed[&key("msi:ai1300ts:1")], map[&key("msi:ai1300ts:1")]);
+        assert_eq!(parsed[&key("msi:ai1300ts:2")].scale, [1.0, 1.0]);
+        assert!(!parsed[&key("msi:ai1300ts:2")].floating);
+        assert_eq!(parsed.len(), 2, "an unknown section is ignored");
     }
 }

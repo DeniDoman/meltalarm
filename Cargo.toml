@@ -13,6 +13,7 @@ meltalarm-model = { path = "crates/model" }
 meltalarm-core = { path = "crates/core" }
 meltalarm-source-api = { path = "crates/source-api" }
 meltalarm-source-msi = { path = "crates/source-msi" }
+meltalarm-source-sim = { path = "crates/source-sim" }
 meltalarm-runtime = { path = "crates/runtime" }
 meltalarm-lifecycle = { path = "crates/lifecycle" }
 

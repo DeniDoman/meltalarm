@@ -24,6 +24,8 @@ pub enum LogEvent {
     Config { text: String },
     ConfigWarning { text: String },
     MonitoringStopped { reason: String },
+    /// Startup ended without monitoring (Spec §5.1).
+    NotStarted { reason: String },
     NotConnected { reason: String },
     Connected { model: String, after: Duration },
     Installed { version: String, autostart: bool },
@@ -55,6 +57,7 @@ impl LogEvent {
             LogEvent::Config { text } => ("CONFIG", text.clone()),
             LogEvent::ConfigWarning { text } => ("CONFIG", format!("WARNING: {text}")),
             LogEvent::MonitoringStopped { reason } => ("STOPPED", format!("Monitoring stopped: {reason}")),
+            LogEvent::NotStarted { reason } => ("STOPPED", format!("Monitoring not started: {reason}")),
             LogEvent::NotConnected { reason } => ("NOT CONNECTED", format!("{reason} — still trying")),
             LogEvent::Connected { model, after } => ("CONNECTED", format!("{model} after {}", secs(*after))),
             LogEvent::Installed { version, autostart } => (
@@ -74,8 +77,8 @@ mod tests {
 
     #[test]
     fn line_format_matches_spec() {
-        let e = LogEvent::PsuClear { conn: "12V-2x6 #1".into(), lasted: Duration::from_secs(42) };
-        assert_eq!(e.format("2026-09-27 18:06:22"), "2026-09-27 18:06:22 | PSU CLEAR     | 12V-2x6 #1 | 42 s");
+        let e = LogEvent::PsuClear { conn: "GPU power cable 1".into(), lasted: Duration::from_secs(42) };
+        assert_eq!(e.format("2026-09-27 18:06:22"), "2026-09-27 18:06:22 | PSU CLEAR     | GPU power cable 1 | 42 s");
     }
 
     #[test]

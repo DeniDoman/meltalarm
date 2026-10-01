@@ -1,4 +1,7 @@
-//! Dev-only simulated source (cargo feature `simulate`): scripted readings, no USB at all.
+//! Dev-only simulated source: scripted readings, no device traffic at all. A frontend uses it
+//! instead of real drivers in its `simulate` build; it also proves the source API has a second
+//! implementation.
+//!
 //! Pick a scenario with `MELTALARM_SIM` = cycle (default) | normal | idle | caution (a wire above the
 //! rating: T23) | overload (MeltAlarm's own alarm) | uneven (advisory: T25) | red (bad contact, PSU
 //! still Normal) | alarm (the PSU's alarm) | critical | fault | nodata | silent (present, never
@@ -43,8 +46,9 @@ impl Driver for SimDriver {
                 model: "MPG Ai1300TS".into(),
                 firmware: Some("sim".into()),
                 serial: None,
-                connectors: (0..2).map(|i| ConnectorInfo { index: i, label: format!("12V-2x6 #{}", i + 1) }).collect(),
+                connectors: (0..2).map(|i| ConnectorInfo { index: i }).collect(),
                 caps: Capabilities { device_verdict: true, device_limits: true, cutoff_timer: true, wire_flags: true },
+                protection_name: Some("Safeguard+".into()),
             },
             start: Instant::now(),
             scenario: std::env::var("MELTALARM_SIM").unwrap_or_else(|_| "cycle".into()),
@@ -110,9 +114,9 @@ impl Source for SimSource {
             protection: Some(Protection {
                 enabled: true,
                 wire_limit: Some(12.0),
-                spread_limit: Some(5.5),
+                imbalance_limit: Some(5.5),
                 wire_trigger: Some(Duration::from_secs(20)),
-                spread_trigger: Some(Duration::from_secs(20)),
+                imbalance_trigger: Some(Duration::from_secs(20)),
                 cutoff_after: Some(Duration::from_secs(180)),
                 hard_wire_limit: Some(18.0),
             }),

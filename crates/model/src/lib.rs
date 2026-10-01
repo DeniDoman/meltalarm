@@ -52,13 +52,16 @@ pub struct SourceInfo {
     pub serial: Option<String>,
     pub connectors: Vec<ConnectorInfo>,
     pub caps: Capabilities,
+    /// The device's own name for its protection feature, e.g. `Safeguard+` (MSI). MeltAlarm's
+    /// texts never name a vendor feature themselves.
+    pub protection_name: Option<String>,
 }
 
+/// A connector the source measures. MeltAlarm names connectors itself ("GPU power cable 1"),
+/// numbered by `index` as on the device.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConnectorInfo {
     pub index: u8,
-    /// Human label, e.g. `12V-2x6 #1`.
-    pub label: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -93,6 +96,12 @@ impl Report {
     pub fn empty(at: Instant) -> Self {
         Report { at, readings: None, verdicts: None, faults: None, protection: None, diagnostic: None }
     }
+
+    /// A tick is healthy only with currents and, for a source that has a verdict of its own,
+    /// that verdict: a missing verdict never reads as Normal.
+    pub fn is_healthy(&self, caps: &Capabilities) -> bool {
+        self.readings.is_some() && (!caps.device_verdict || self.verdicts.is_some())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -115,7 +124,7 @@ pub enum DeviceStatus {
     Normal,
     /// A wire stayed above the device's wire limit for its trigger time.
     OverCurrent,
-    /// The spread between wires stayed above the device's limit for its trigger time.
+    /// The imbalance between wires stayed above the device's limit for its trigger time.
     Imbalance,
     /// A wire exceeded the device's hard limit; power may be cut immediately.
     CriticalOverCurrent,
@@ -133,9 +142,9 @@ impl DeviceStatus {
 pub struct Protection {
     pub enabled: bool,
     pub wire_limit: Option<f32>,
-    pub spread_limit: Option<f32>,
+    pub imbalance_limit: Option<f32>,
     pub wire_trigger: Option<Duration>,
-    pub spread_trigger: Option<Duration>,
+    pub imbalance_trigger: Option<Duration>,
     pub cutoff_after: Option<Duration>,
     pub hard_wire_limit: Option<f32>,
 }

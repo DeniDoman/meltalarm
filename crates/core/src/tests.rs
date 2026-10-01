@@ -1,6 +1,7 @@
 //! Scenario tests: synthetic source feeds against the spec's rules (§6, §8, §9).
 
 use super::*;
+use crate::text::note_time;
 use meltalarm_model::{Capabilities, ConnectorInfo, ConnectorReading, SourceId};
 
 const IDLE: [f32; 6] = [0.125; 6];
@@ -22,8 +23,9 @@ fn info() -> SourceInfo {
         model: "MPG Ai1300TS".into(),
         firmware: Some("10".into()),
         serial: None,
-        connectors: (0..2).map(|i| ConnectorInfo { index: i, label: format!("12V-2x6 #{}", i + 1) }).collect(),
+        connectors: (0..2).map(|i| ConnectorInfo { index: i }).collect(),
         caps: Capabilities { device_verdict: true, device_limits: true, cutoff_timer: true, wire_flags: true },
+        protection_name: Some("Safeguard+".into()),
     }
 }
 
@@ -31,9 +33,9 @@ fn prot() -> Protection {
     Protection {
         enabled: true,
         wire_limit: Some(12.0),
-        spread_limit: Some(5.5),
+        imbalance_limit: Some(5.5),
         wire_trigger: Some(Duration::from_secs(20)),
-        spread_trigger: Some(Duration::from_secs(20)),
+        imbalance_trigger: Some(Duration::from_secs(20)),
         cutoff_after: Some(Duration::from_secs(180)),
         hard_wire_limit: Some(18.0),
     }
@@ -150,7 +152,7 @@ fn first_report_tracks_the_connector_in_use_and_logs_limits_and_config() {
     assert_eq!(v.connectors[1].tooltip, "MeltAlarm · Cable 2 · Not connected", "untracked: numbered");
     assert_eq!(v.connectors[1].full_label, "GPU power cable 2");
     assert_eq!(v.connectors[0].psu_status, "Normal");
-    assert_eq!((v.connectors[0].bar_limit, v.connectors[0].caution_line), (Some(10.5), Some(9.5)));
+    assert_eq!((v.connectors[0].bar_limit, v.connectors[0].bar_rating), (Some(10.5), Some(9.5)));
 }
 
 #[test]
@@ -622,4 +624,13 @@ fn two_tracked_cables_carry_numbers_on_screen_and_in_the_voice() {
     let v = h.view();
     assert_eq!(v.alarm.as_ref().unwrap().connector, "GPU power cable 2");
     assert!(matches!(v.audio.unwrap().steps.last(), Some(AudioStep::Speak(t)) if t.ends_with("overload on cable 2. Stop the game now.")));
+}
+
+#[test]
+fn bar_scale_gives_the_decision_range_room() {
+    let share = |a: f32| (bar_share(a, 10.5) * 1000.0).round() / 1000.0;
+    assert_eq!((share(0.0), share(6.0), share(10.5), share(14.0)), (0.0, 0.2, 1.0, 1.0));
+    assert_eq!(share(9.5), 0.822, "the cut: the head is the top 18 %");
+    assert_eq!(share(8.1), 0.573, "a 575 W load sits at 57 %");
+    assert_eq!(bar_share(4.0, 8.0), 4.0 / 4.8 * 0.2, "custom limits: the knee at 60 % of the limit");
 }

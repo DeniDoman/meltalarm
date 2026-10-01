@@ -125,9 +125,7 @@ impl Ctx {
             self.wait_until(next)?;
             next = (next + TICK).max(Instant::now());
             let report = source.poll(&mut self.hid);
-            let needs_verdict = source.info().caps.device_verdict;
-            let healthy = report.readings.is_some() && (!needs_verdict || report.verdicts.is_some());
-            unhealthy = if healthy { 0 } else { unhealthy + 1 };
+            unhealthy = if report.is_healthy(&source.info().caps) { 0 } else { unhealthy + 1 };
             self.send(SourceEvent::Core(Event::Report(report)));
 
             if unhealthy >= DROP_AFTER_UNHEALTHY {

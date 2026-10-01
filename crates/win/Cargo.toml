@@ -11,13 +11,14 @@ path = "src/main.rs"
 
 [features]
 # Dev only: scripted readings instead of USB, runs without elevation. Never in releases.
-simulate = []
+simulate = ["dep:meltalarm-source-sim"]
 
 [dependencies]
 meltalarm-model.workspace = true
 meltalarm-core.workspace = true
 meltalarm-source-api.workspace = true
 meltalarm-source-msi.workspace = true
+meltalarm-source-sim = { workspace = true, optional = true }
 meltalarm-runtime.workspace = true
 meltalarm-lifecycle.workspace = true
 

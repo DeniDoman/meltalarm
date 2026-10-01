@@ -18,7 +18,7 @@ use meltalarm_core::{Core, Event, LogEvent, Output, UserAction, ViewModel};
 use meltalarm_source_api::Driver;
 
 pub use meltalarm_core as core;
-pub use store::{LogSink, SettingsStore, StateStore};
+pub use store::{LogSink, SettingsStore, StateStore, write_atomic};
 
 pub struct Paths {
     pub config_dir: PathBuf,
@@ -93,7 +93,7 @@ impl Runtime {
             match ev {
                 SourceEvent::Core(e) => merge(&mut out, self.core.handle(e, now)),
                 SourceEvent::DiscoveryFailed(msg) => {
-                    out.log.push(LogEvent::MonitoringStopped { reason: format!("not started: {}", msg.replace('\n', " ")) });
+                    out.log.push(LogEvent::NotStarted { reason: msg.replace('\n', " ") });
                     update.lifecycle = Some(Lifecycle::DiscoveryFailed(msg));
                 }
                 SourceEvent::Fatal(msg) => {
