@@ -170,3 +170,15 @@ One soft bell-like chime, **synthesized by MeltAlarm** so it doesn't depend on t
 - Win32 windows with **Direct2D + DirectWrite in software mode** (software render target), so no GPU driver is loaded into the process.
 - The flyout, the floating view, the notch and the strip are **layered windows drawn entirely by MeltAlarm**: card, rounded corners, shadow and border included, with solid surface colors (no Mica or acrylic), so Windows 10 needs no separate look (to be confirmed in the v1 Windows 10 pass).
 - A small set of self-drawn controls: button, toggle, checkbox, bars, chip, text. The Settings window (v1) is a normal window; DWM supplies its title bar and corners.
+
+## History
+
+| Date | Changes |
+|---|---|
+| 2026-10-01 | `Not connected` chip; Compact 250 wide with the short name `Cable 2` |
+| 2026-10-01 | Clean-up: the app icon that ships, motion marked as not built, rendering stack as built |
+| 2026-10-01 | Cut bars, names ("GPU power cable"), imbalance; no wire numbers or total |
+| 2026-10-01 | The alert ladder: caution strip, chime, cable notes, notifications |
+| 2026-09-30 | Floating monitor |
+| 2026-09-28 | App icon and notifications, after the first install showed undesigned ones |
+| 2026-09-27 | First version: dark cockpit, tray glyph, popup, alarm notch |
