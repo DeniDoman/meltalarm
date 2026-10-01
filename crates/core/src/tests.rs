@@ -149,8 +149,11 @@ fn first_report_tracks_the_connector_in_use_and_logs_limits_and_config() {
     assert!(v.alarm.is_none() && v.audio.is_none() && v.caution.is_none());
     assert_eq!(v.connectors[0].tooltip, "MeltAlarm · OK · max 0.1A · Δ 0.0A");
     assert_eq!(v.connectors[0].label, "GPU power cable", "one tracked cable: no number");
+    assert_eq!(v.connectors[0].short_label, "GPU power cable", "no number: no short form");
     assert_eq!(v.connectors[1].tooltip, "MeltAlarm · Cable 2 · Not connected", "untracked: numbered");
     assert_eq!(v.connectors[1].full_label, "GPU power cable 2");
+    let c2 = &v.connectors[1];
+    assert_eq!((c2.status_kind, c2.status_text.as_str(), c2.summary.as_str()), (StatusKind::NotConnected, "Not connected", "No current on any wire"), "never OK without current");
     assert_eq!(v.connectors[0].psu_status, "Normal");
     assert_eq!((v.connectors[0].bar_limit, v.connectors[0].bar_rating), (Some(10.5), Some(9.5)));
 }
@@ -618,6 +621,7 @@ fn two_tracked_cables_carry_numbers_on_screen_and_in_the_voice() {
     h.ev(Event::User(UserAction::SetTracked(k2, true)));
     let v = h.view();
     assert_eq!((v.connectors[0].label.as_str(), v.connectors[1].label.as_str()), ("GPU power cable 1", "GPU power cable 2"));
+    assert_eq!(v.connectors[1].short_label, "Cable 2", "the Compact layout's name");
     assert!(v.connectors[0].tooltip.starts_with("MeltAlarm · Cable 1 · OK"));
     h.now += Duration::from_secs(1);
     h.report(LOAD, [8.9, 9.1, 16.0, 9.0, 8.8, 9.0], [0, 0], false);

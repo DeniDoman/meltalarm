@@ -1,6 +1,6 @@
 # MeltAlarm — Functional Specification
 
-**Status:** v2.6 · **Date:** 2026-10-01 · Companions: `DESIGN.md` (how it looks), `ARCHITECTURE.md` (how it is built) · Changes: §13
+**Status:** v2.7 · **Date:** 2026-10-01 · Companions: `DESIGN.md` (how it looks), `ARCHITECTURE.md` (how it is built) · Changes: §13
 
 **Supported hardware:**
 - MSI **MPG Ai1300TS** and **MPG Ai1600TS** PSUs, connected by USB.
@@ -355,7 +355,7 @@ The `E1` rail OCP (12V/5V/3.3V), OPP, OTP and Fan flags are **PSU faults**:
 - logged when set and when cleared
 
 ### 6.7 Connector presence
-A connector counts as *connected* if any wire read > 0 A in the last 10 s (F11). This drives "In use" / "No load" in Settings and the first-run default.
+A connector counts as *connected* if any wire read > 0 A in the last 10 s (F11). This drives the state `Not connected` (§7.1), "In use" / "Not connected" in Settings, and the first-run default. A cable that carries no current is shown as not connected, never as `OK`: MeltAlarm can't vouch for a cable it can't measure.
 
 ### 6.8 Stale data
 If the last valid sample is older than 1 tick, values are shown as stale (dimmed). After NO DATA (§5.4), everything is grey.
@@ -379,6 +379,7 @@ This is a **status** (§8), not an episode: nothing interrupts the user. The app
 - **The thing we watch is the "GPU power cable"**, everywhere the user reads it: screens, notifications, voice, Settings and the log. "12V-2x6" appears only in the README, which bridges the two: *"MeltAlarm watches the GPU power cable: the 16-pin cable from your PSU's 12V-2x6 socket to the graphics card. Cable 1 and cable 2 are the PSU's two 12V-2x6 sockets, numbered as on the PSU."*
 - **The number appears only when it tells something.** With one tracked cable (most users) the screens say just *GPU power cable*. The number is added (*GPU power cable 2*, short *Cable 2* where space is tight) when more than one cable is tracked, or when the cable isn't tracked (an alarm on it must say which). Settings lists both sockets, so it always numbers. The **log always numbers**: it is a permanent record and stays unambiguous after a second GPU is added.
 - **No wire numbers on screen.** Which physical pin a PSU wire number is has not been verified (§1), so "wire 3" can't send anyone to a pin. Screens say *a wire* / *one wire*, and the affected bar carries the color. The log keeps the wire index for diagnostics.
+- **Where space is tight** (tooltip, the caution strip, the Compact floating view) a numbered cable is *Cable 2*.
 - **Imbalance**, not "spread": the difference between the most and the least loaded wire. The event of too much imbalance is *uneven load*.
 - **No total current.** The sum of the wires is roughly the GPU's power draw; no decision depends on it and GPU tools show it in watts. It is not shown.
 
@@ -391,7 +392,7 @@ This is a **status** (§8), not an episode: nothing interrupts the user. The app
   - **grey**: NO DATA, or connector not connected
   - **connecting**: before the first successful connection, a single hollow icon with the tooltip *"MeltAlarm · connecting to the PSU…"* (§5.1)
   - **attention marker** (one meaning: "there is something to read in the flyout"): a cable note (§8.10), a PSU fault (§6.6) or Safeguard+ OFF (§6.9)
-- **One vocabulary on every surface** (tooltip, flyout chip, floating view): `OK`, `Caution`, `ALARM`, `No data` (plus `Not connected` in the tooltip).
+- **One vocabulary on every surface** (tooltip, flyout chip, floating view, menu, Settings): `OK`, `Caution`, `ALARM`, `No data`, `Not connected`.
 - Tooltip, one line (Windows wraps tray tips at about 50 characters): `MeltAlarm · OK · max 8.6A · Δ 0.7A` (Δ = imbalance); with two tracked cables `MeltAlarm · Cable 2 · OK · max 8.6A · Δ 0.7A`. Other states: `Caution · max 9.9A · Δ 0.7A`, `ALARM: <short reason>`, `No data`, `Not connected`. With a cable note and no live problem: `MeltAlarm · OK · check the cable`.
 - Left click toggles the status popup for **that icon's connector**.
 - Right click opens a menu: *Settings…*, *Open alarm log*, *Exit* (Exit asks for confirmation: "Monitoring will stop"). The menu header shows the app version. Until the Settings window exists, the settings sit in this menu (§7.3).
@@ -400,7 +401,7 @@ This is a **status** (§8), not an episode: nothing interrupts the user. The app
 ### 7.2 Status popup
 - Anchored right above the clicked icon, using the icon's actual position. If that position can't be determined (e.g. the icon is in the overflow area), it anchors near the cursor.
 - Content:
-  - the cable's name (§7.0), then the state chip (`OK` / `Caution` / `ALARM` / `No data`)
+  - the cable's name (§7.0), then the state chip (`OK` / `Caution` / `ALARM` / `No data` / `Not connected`)
   - during an alarm: a red strip with the reason (e.g. `Wire overload · 12.4 A`, or `PSU: Current imbalance`) and, from the PSU, the countdown (§8.4)
   - **6 vertical bars**, one per wire, in the PSU's wire order, with the current under each (1 decimal), no wire numbers. The top of a bar is the **alarm limit**; the bar is **cut at the rating**, so its short top part is the caution zone. The scale gives the decision range room: 0–6 A take the bottom fifth, 6 A to the alarm limit the rest (DESIGN.md "Popup"). No lines or numbers mark the limits; colors only show state.
   - live lines, while true: wire above the rating or over the alarm limit, uneven load, PSU faults, Safeguard+ OFF, monitoring interrupted
@@ -417,7 +418,7 @@ This is a **status** (§8), not an episode: nothing interrupts the user. The app
 | Setting | Default | Notes |
 |---|---|---|
 | Run at Windows startup | **On** | Installed copy only: creates or removes the startup task (§4.1). A portable copy shows an **Install…** button here instead (§4.5). |
-| Track GPU power cable 1 ☐ ● / Track GPU power cable 2 ☐ ● | First run: the cable(s) currently *connected*; if none, cable 1 | At least one must stay checked (the last checked box is disabled). The **●** hint dot is live: green = in use, **grey** = no load (§6.7). An unused connector is normal, never red. |
+| Track GPU power cable 1 ☐ ● / Track GPU power cable 2 ☐ ● | First run: the cable(s) currently *connected*; if none, cable 1 | At least one must stay checked (the last checked box is disabled). The **●** hint dot is live: green = in use, **grey** = not connected (§6.7). An unused connector is normal, never red. |
 | Alerts (on screen, sound, voice) | **On** | Master switch for every interruption: the alarm, the caution strip, advisory and after-alarm notifications (§8). Off means colors, cable notes and the log only. The log is always written. The file key stays `alarm`. |
 
 - **Limits** (read-only), both judges side by side, in sentences:
@@ -453,7 +454,7 @@ Each tracked connector has **one view**, in one of three states: *hidden*, *flyo
 - Always on top, and **never takes focus**: clicking or dragging it doesn't take keyboard or mouse focus from a game. No taskbar button, not in Alt+Tab.
 - Drag anywhere on it to move. Drag an edge or corner to scale it **uniformly**, from 75 % up to the size of its display. No free aspect ratio, no snapping.
 - Two layouts, switched with the tab on its bottom edge: **Compact** (bars, values and one summary line) and **Full** (the §7.2 content). Compact never changes size with the state.
-- The Compact summary line shows the most important thing, in this order: the alarm reason (`Overload · 12.4 A · stop` / `Imbalance · cut ~2:13`), a live caution (`9.9 A · over rating`), uneven load (`Imbalance 4.1 A`, caution color), no data (`Last reading 12 s ago`), a cable note (`Check the cable`), otherwise `Imbalance 0.4 A`.
+- The Compact summary line shows the most important thing, in this order: the alarm reason (`Overload · 12.4 A · stop` / `Imbalance · cut ~2:13`), a live caution (`9.9 A · over rating`), uneven load (`Imbalance 4.1 A`, caution color), no data (`Last reading 12 s ago`), a cable note (`Check the cable`), not connected (`No current on any wire`), otherwise `Imbalance 0.4 A`.
 - Its controls (×, tab, resize grip) appear only while the mouse is over it.
 - Exclusive-fullscreen games hide it (like the notch, §8.7). Borderless games don't.
 
@@ -703,6 +704,7 @@ During a game Windows holds notifications back silently and shows them in the no
 
 | Version | Date | Changes |
 |---|---|---|
+| 2.7 | 2026-10-01 | `Not connected` is a state on every surface: a cable without current is never `OK` (§6.7, §7.1); the short name `Cable 2` where space is tight (§7.0) |
 | 2.6 | 2026-10-01 | Clean-up: log examples match the real log lines, the PSU's protection is named by the source (§6.9), the full hidapi deny-list (§3), notch height, the update refusal text |
 | 2.5 | 2026-10-01 | Names: "GPU power cable", numbered only when it helps; "imbalance" for the spread; no wire numbers or total current on screen (§7.0) |
 | 2.4 | 2026-10-01 | MeltAlarm's own cable limits next to the PSU's verdict ("one alarm, two judges"); the alert ladder; cable notes (§6, §7, §8, F20–F22) |

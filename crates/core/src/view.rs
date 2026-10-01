@@ -84,13 +84,16 @@ pub enum Glyph {
     NotConnected,
 }
 
-/// The state words, the same on every surface (Spec §7.1): `OK`, `Caution`, `ALARM`, `No data`.
+/// The state words, the same on every surface (Spec §7.1): `OK`, `Caution`, `ALARM`, `No data`,
+/// `Not connected`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StatusKind {
     Normal,
     Caution,
     Alarm,
     NoData,
+    /// No current on any wire (Spec §6.7): nothing to vouch for, so never `OK`.
+    NotConnected,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -120,6 +123,8 @@ pub struct ConnectorView {
     pub label: String,
     /// Always numbered: "GPU power cable 1" (menus, Settings).
     pub full_label: String,
+    /// Where space is tight (the Compact layout): "Cable 2" when numbered, else the display name.
+    pub short_label: String,
     pub tracked: bool,
     pub present: bool,
     pub stale: bool,
@@ -256,6 +261,8 @@ impl Core {
             StatusKind::Alarm
         } else if no_data {
             StatusKind::NoData
+        } else if !present {
+            StatusKind::NotConnected
         } else if live > Level::Normal {
             StatusKind::Caution
         } else {
@@ -266,6 +273,7 @@ impl Core {
             StatusKind::Caution => "Caution",
             StatusKind::Alarm => "ALARM",
             StatusKind::NoData => "No data",
+            StatusKind::NotConnected => "Not connected",
         }
         .to_owned();
 
@@ -380,6 +388,8 @@ impl Core {
             (format!("Imbalance {}", amps(c.eval.imbalance.unwrap_or(0.0))), Level::Caution)
         } else if cable_note.is_some() {
             ("Check the cable".to_owned(), Level::Caution)
+        } else if !present {
+            ("No current on any wire".to_owned(), Level::Normal)
         } else if let Some(s) = c.eval.imbalance {
             (format!("Imbalance {}", amps(s)), Level::Normal)
         } else {
@@ -390,6 +400,7 @@ impl Core {
             key: c.key.clone(),
             label: self.name(c),
             full_label: c.label.clone(),
+            short_label: self.short_name(c).unwrap_or_else(|| self.name(c)),
             tracked: self.settings.tracked.contains(&c.key),
             present,
             stale,
@@ -405,7 +416,7 @@ impl Core {
             alarm_reason,
             countdown,
             notes,
-            cable_note: cable_note.filter(|_| matches!(status_kind, StatusKind::Normal | StatusKind::NoData)),
+            cable_note: cable_note.filter(|_| matches!(status_kind, StatusKind::Normal | StatusKind::NoData | StatusKind::NotConnected)),
             psu_status,
             psu_level,
             tooltip,

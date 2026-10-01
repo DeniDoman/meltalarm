@@ -86,30 +86,33 @@ pub(crate) fn draw_close(p: &Painter, t: &Theme, x: f32, y: f32, w: f32, h: f32)
     p.line(cx + 4.5, cy - 4.5, cx - 4.5, cy + 4.5, t.fg3, 1.0, 1.3);
 }
 
-/// Name, then the status chip right after it (DESIGN.md "Popup", item 1).
+/// Name, then the status chip right after it (DESIGN.md "Popup", item 1). Compact uses the short name.
 pub(crate) fn draw_title(p: &Painter, t: &Theme, c: &ConnectorView, x: f32, y: f32, compact: bool) {
     let (title, size, chip_h, chip_text, chip_font) = if compact {
         (ui(13.0, 600), 20.0, 18.0, c.status_text.as_str(), ui(11.0, 600))
     } else {
         (ui(15.0, 600), 24.0, 24.0, c.status_text.as_str(), ui(12.0, 600))
     };
-    let lw = p.gfx().text_width(&c.label, title);
-    p.text(&c.label, title, x, y, lw + 2.0, size, t.fg, 1.0, Align::Left);
+    let name = if compact { &c.short_label } else { &c.label };
+    let lw = p.gfx().text_width(name, title);
+    p.text(name, title, x, y, lw + 2.0, size, t.fg, 1.0, Align::Left);
     let dot_r = if compact { 3.0 } else { 3.5 };
     let pad = if compact { 7.0 } else { 10.0 };
-    let chip_w = p.gfx().text_width(chip_text, chip_font) + 2.0 * pad + 2.0 * dot_r + 6.0;
     let (chip_bg, chip_a, chip_fg, dot) = match c.status_kind {
         StatusKind::Alarm => (ALARM_RED, 1.0, 0xFFFFFF, Some(0xFFFFFF)),
         StatusKind::Caution => (CAUTION_DARK, 0.18, t.caution_text, Some(t.caution)),
-        StatusKind::NoData => (t.track.0, t.track.1, t.fg3, None),
+        StatusKind::NoData | StatusKind::NotConnected => (t.track.0, t.track.1, t.fg3, None),
         StatusKind::Normal => (t.track.0, t.track.1, t.fg, Some(t.ok)),
     };
+    // Room for the dot only when there is one.
+    let dot_space = if dot.is_some() { 2.0 * dot_r + 6.0 } else { 0.0 };
+    let chip_w = p.gfx().text_width(chip_text, chip_font) + 2.0 * pad + dot_space;
     let (chip_x, chip_y) = (x + lw + 8.0, y + (size - chip_h) / 2.0);
     p.fill_rrect(chip_x, chip_y, chip_w, chip_h, chip_h / 2.0, chip_bg, chip_a);
     if let Some(d) = dot {
         p.circle(chip_x + pad + dot_r, chip_y + chip_h / 2.0, dot_r, d, 1.0);
     }
-    let text_x = chip_x + pad + 2.0 * dot_r + 6.0;
+    let text_x = chip_x + pad + dot_space;
     p.text(chip_text, chip_font, text_x, chip_y, chip_w - (text_x - chip_x), chip_h, chip_fg, 1.0, Align::Left);
 }
 

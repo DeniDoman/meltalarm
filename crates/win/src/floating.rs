@@ -23,7 +23,9 @@ use crate::card::{self, HeaderButton, MARGIN, PAD, TOP};
 use crate::palette::{self, Theme, level_colors};
 
 pub const CLASS: PCWSTR = w!("MeltAlarmFloat");
-const COMPACT: (f32, f32) = (220.0, 152.0);
+/// DESIGN.md "Floating monitor": the longest header ("GPU power cable" + "Not connected") fits
+/// beside the hover ×.
+const COMPACT: (f32, f32) = (250.0, 152.0);
 /// Scale handles: this far inside (and outside) the card edge, in DIPs.
 const EDGE: f32 = 6.0;
 const MIN_SCALE: f32 = 0.75;
@@ -561,14 +563,14 @@ fn paint(p: &Painter, t: &Theme, c: &ConnectorView, layout: Layout, cw: f32, ch:
     }
 }
 
-/// DESIGN.md "Floating monitor", Compact: 220 × 152, fixed in every state.
+/// DESIGN.md "Floating monitor", Compact: 250 × 152, fixed in every state.
 fn draw_compact(p: &Painter, t: &Theme, c: &ConnectorView, x: f32, y: f32) {
     card::draw_title(p, t, c, x + 14.0, y + 12.0, true);
     let y0 = y + 40.0;
     let bar_h = 56.0;
     let stale = if c.stale { 0.45 } else { 1.0 };
     for (i, wv) in c.wires.iter().enumerate() {
-        let cx = x + 30.0 + i as f32 * 32.0;
+        let cx = x + (COMPACT.0 - 5.0 * 32.0) / 2.0 + i as f32 * 32.0;
         let (bar, txt) = level_colors(t, wv.level);
         card::draw_cut_bar(p, cx - 5.0, y0, 10.0, bar_h, wv.amps, c.bar_limit, c.bar_rating, t.track, bar, stale, t.fg3);
         let value = wv.amps.map_or("—".to_owned(), |a| format!("{a:.1}"));

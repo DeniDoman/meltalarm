@@ -18,7 +18,7 @@ Principle: **quiet when fine, unmistakable when not.**
 | Fonts | Segoe UI Variable for UI text; Bahnschrift for numbers and the alarm (tabular figures). Both ship with Windows. |
 | Motion | Tray alarm blinks at 1 Hz. Locate pulse 0.6 s. Nothing else animates. *Designed, not built yet (v1):* popup 150 ms rise and fade; notch and caution strip 200 ms drop from the top edge. Until then they appear and disappear at once. |
 | Alert ladder | Spec §8. **Alarm** = the red notch + alarm sound + voice. **Caution** = the amber strip + one chime. **Advisory** = a silent notification. **Status** = the attention marker. Each channel means exactly one level. |
-| Vocabulary | One set of state words on every surface: `OK`, `Caution`, `ALARM`, `No data`. The PSU's own verdict appears only as information ("PSU status", "reported by the PSU"). |
+| Vocabulary | One set of state words on every surface: `OK`, `Caution`, `ALARM`, `No data`, `Not connected`. The PSU's own verdict appears only as information ("PSU status", "reported by the PSU"). |
 
 ## State colors
 
@@ -78,6 +78,7 @@ From top to bottom:
    | `Caution` | amber tint (`#F5A623` at 18 %), amber dot, caution text color |
    | `ALARM` | solid `#C8102E`, white dot and text |
    | `No data` | neutral track fill, no dot, tertiary text |
+   | `Not connected` | as `No data`: nothing to vouch for. The bars stay, reading 0.0 |
 
 2. During an alarm: a red strip with the reason (`Wire overload · 12.4 A`, or `PSU: Current imbalance`) and, from the PSU, the countdown (`Power cut in ~2:47`).
 3. **Cut bars** (96 px tall, 14 px wide) with the value under each; no wire numbers. See "Cut bars" below.
@@ -103,9 +104,9 @@ A connector's view taken out of the tray to watch it for a long time (Spec §7.4
 
 | | Compact | Full |
 |---|---|---|
-| Size at 100 % | 220 × 152, **fixed** in every state | the popup card (360 wide), grows downward for notes like the popup |
-| Content | name + chip (`OK` / `Caution` / `ALARM` / `No data`), six cut bars (56 px, 10 px wide) with values, one summary line | exactly the popup |
-| Summary line | the most important thing, in the Spec §7.4 order: alarm (`Overload · 12.4 A · stop`, `Imbalance · cut ~2:13`) in warning red; caution (`9.9 A · over rating`) and uneven load (`Imbalance 4.1 A`) in caution text; no data (`Last reading 12 s ago`); a cable note (`Check the cable`) in caution text; else `Imbalance 0.4 A` | — |
+| Size at 100 % | 250 × 152, **fixed** in every state (the longest header, `GPU power cable` + `Not connected`, fits beside the hover ×) | the popup card (360 wide), grows downward for notes like the popup |
+| Content | name (the short form `Cable 2` when numbered, Spec §7.0) + chip (`OK` / `Caution` / `ALARM` / `No data` / `Not connected`), six cut bars (56 px, 10 px wide) with values, one summary line | exactly the popup |
+| Summary line | the most important thing, in the Spec §7.4 order: alarm (`Overload · 12.4 A · stop`, `Imbalance · cut ~2:13`) in warning red; caution (`9.9 A · over rating`) and uneven load (`Imbalance 4.1 A`) in caution text; no data (`Last reading 12 s ago`); a cable note (`Check the cable`) in caution text; not connected (`No current on any wire`) in tertiary text; else `Imbalance 0.4 A` | — |
 
 - **Calm when fine:** at rest only data is visible. On hover: × (top right), a 36 × 18 tab with a chevron hanging off the bottom edge (⌄ = Full, ⌃ = Compact), a faint resize grip in the bottom-right corner, and the border brightens to `#555555` (light theme `#B0B0B0`).
 - **Scaling is uniform:** the layout is drawn at the chosen scale and never distorts. Each layout remembers its own scale.
@@ -115,7 +116,7 @@ A connector's view taken out of the tray to watch it for a long time (Spec §7.4
 ## Settings (Windows 11 window, cards)
 
 Sections, in order:
-1. **Monitored cables:** "GPU power cable 1" and "GPU power cable 2", checkboxes, each with a live dot and a text label ("In use" with a green dot / "No load" with a **grey** dot; an unused cable is never red).
+1. **Monitored cables:** "GPU power cable 1" and "GPU power cable 2", checkboxes, each with a live dot and a text label ("In use" with a green dot / "Not connected" with a **grey** dot; an unused cable is never red).
 2. **Alerts:** a toggle ("Alerts: on screen, sound and voice"; off: "Colors, cable notes and the log only"), plus the *Test alarm* button.
 3. **Startup:** a toggle (installed copy) or *Install…* (portable).
 4. **Limits:** read-only, two short paragraphs, MeltAlarm's first, then the PSU's (Spec §7.3). *custom* in caution text after an overridden value.

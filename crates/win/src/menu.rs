@@ -35,7 +35,7 @@ impl App {
             let _ = AppendMenuW(m, MF_SEPARATOR, 0, PCWSTR::null());
             for (i, c) in v.connectors.iter().enumerate() {
                 let grey = if c.tracked && tracked <= 1 { MF_GRAYED } else { MF_ENABLED };
-                let text = format!("Track {}  ({})", c.full_label, if c.present { "in use" } else { "no load" });
+                let text = format!("Track {}  ({})", c.full_label, if c.present { "in use" } else { "not connected" });
                 add(MF_STRING | check(c.tracked) | grey, CMD_TRACK + i as u32, &text);
             }
             let _ = AppendMenuW(m, MF_SEPARATOR, 0, PCWSTR::null());
