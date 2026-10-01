@@ -3,8 +3,7 @@
 
 use meltalarm_core::UserAction;
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, HMENU, MENU_ITEM_FLAGS, MF_CHECKED, MF_ENABLED, MF_GRAYED, MF_SEPARATOR, MF_STRING,
-    MF_UNCHECKED,
+    AppendMenuW, CreatePopupMenu, HMENU, MENU_ITEM_FLAGS, MF_CHECKED, MF_ENABLED, MF_GRAYED, MF_SEPARATOR, MF_STRING, MF_UNCHECKED,
 };
 use windows::core::{HSTRING, PCWSTR};
 
@@ -29,7 +28,13 @@ impl App {
                 let _ = AppendMenuW(m, flags, id as usize, &HSTRING::from(text));
             };
             let check = |on: bool| if on { MF_CHECKED } else { MF_UNCHECKED };
-            let edition = if cfg!(feature = "simulate") { " (simulated)" } else if self.portable { " (not installed)" } else { "" };
+            let edition = if cfg!(feature = "simulate") {
+                " (simulated)"
+            } else if self.portable {
+                " (not installed)"
+            } else {
+                ""
+            };
             add(MF_STRING | MF_GRAYED, 0, &format!("MeltAlarm {}{edition}", env!("CARGO_PKG_VERSION")));
             let _ = AppendMenuW(m, MF_SEPARATOR, 0, PCWSTR::null());
             for (i, c) in v.connectors.iter().enumerate() {

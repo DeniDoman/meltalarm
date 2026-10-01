@@ -4,8 +4,8 @@
 //! over the closed `Request` enum (8 reads + MSI's connect handshake), and they reach the
 //! device through a single call site in `transport` (docs/ARCHITECTURE.md §9).
 
-pub mod protocol;
 mod lock;
+pub mod protocol;
 mod transport;
 
 use std::time::{Duration, Instant};
@@ -34,8 +34,7 @@ impl Driver for MsiDriver {
         };
         // The product id identifies a Safeguard+ (TS) model: MSI Center and the Afterburner
         // plugin select the TS protocol by these PIDs alone.
-        let Some(dev_info) =
-            api.device_list().find(|d| d.vendor_id() == VID && [PID_AI1300TS, PID_AI1600TS].contains(&d.product_id()))
+        let Some(dev_info) = api.device_list().find(|d| d.vendor_id() == VID && [PID_AI1300TS, PID_AI1600TS].contains(&d.product_id()))
         else {
             return Discovery::NotPresent;
         };
@@ -68,8 +67,7 @@ impl MsiSource {
     fn identify(device: HidDevice, lock: PsuLock, pid: u16) -> Result<Self, TxError> {
         transport::transact(&device, &lock, Request::Handshake)?;
         let text = |reg| transport::transact(&device, &lock, Request::Read(reg)).map(|f| f.text());
-        let (id, default_model) =
-            if pid == PID_AI1600TS { ("msi:ai1600ts", "MPG Ai1600TS") } else { ("msi:ai1300ts", "MPG Ai1300TS") };
+        let (id, default_model) = if pid == PID_AI1600TS { ("msi:ai1600ts", "MPG Ai1600TS") } else { ("msi:ai1300ts", "MPG Ai1300TS") };
         let reported = text(Reg::MfrModel)?;
         let model = if reported.starts_with("MPG") { reported } else { default_model.to_owned() };
         let info = SourceInfo {

@@ -29,14 +29,35 @@ pub enum Rule {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum GuardEvent {
-    OverloadStart { wire: usize, amps: f32, rule: Rule },
-    OverloadEnd { lasted: Duration, peak: (usize, f32) },
+    OverloadStart {
+        wire: usize,
+        amps: f32,
+        rule: Rule,
+    },
+    OverloadEnd {
+        lasted: Duration,
+        peak: (usize, f32),
+    },
     /// A wire above the rating qualified (caution).
-    CautionStart { wire: usize, amps: f32 },
-    CautionEnd { lasted: Duration, peak: (usize, f32) },
+    CautionStart {
+        wire: usize,
+        amps: f32,
+    },
+    CautionEnd {
+        lasted: Duration,
+        peak: (usize, f32),
+    },
     /// Uneven load qualified (advisory). `low`: the wire carrying least; `high`: the most.
-    UnevenStart { imbalance: f32, avg: f32, low: (usize, f32), high: f32 },
-    UnevenEnd { lasted: Duration, peak_imbalance: f32 },
+    UnevenStart {
+        imbalance: f32,
+        avg: f32,
+        low: (usize, f32),
+        high: f32,
+    },
+    UnevenEnd {
+        lasted: Duration,
+        peak_imbalance: f32,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]

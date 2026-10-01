@@ -95,13 +95,21 @@ pub struct Facts {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Launch {
     /// Start monitoring. `portable`: no autostart, "Install…" offered (self-managed only).
-    Monitor { portable: bool },
+    Monitor {
+        portable: bool,
+    },
     /// Spec L6: bring the running instance forward, then exit.
     HandOff,
     OfferInstall,
-    OfferUpdate { from: Version, to: Version },
+    OfferUpdate {
+        from: Version,
+        to: Version,
+    },
     /// A downgrade: how a bad update is rolled back.
-    OfferReplace { from: Version, to: Version },
+    OfferReplace {
+        from: Version,
+        to: Version,
+    },
     /// Same version as installed: hand off to the installed copy (start it if not running).
     StartInstalled,
     Uninstall,

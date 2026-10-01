@@ -425,7 +425,8 @@ impl Core {
                 if matches!(self.phase, Phase::Idle | Phase::Cleared { .. }) {
                     self.chime_seq += 1;
                     self.strip = None;
-                    self.phase = Phase::Test { until: now + TEST_STRIP + TEST_LENGTH, strip_until: now + TEST_STRIP, chime: self.chime_seq };
+                    self.phase =
+                        Phase::Test { until: now + TEST_STRIP + TEST_LENGTH, strip_until: now + TEST_STRIP, chime: self.chime_seq };
                 }
             }
             UserAction::SetTracked(key, on) => {

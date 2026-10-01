@@ -7,8 +7,8 @@ use meltalarm_model::ConnectorKey;
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_NONE, NIIF_NOSOUND, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NOTIFYICON_VERSION_4,
-    NOTIFYICONDATAW, NOTIFYICONIDENTIFIER, Shell_NotifyIconGetRect, Shell_NotifyIconW,
+    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_NONE, NIIF_NOSOUND, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION,
+    NOTIFYICON_VERSION_4, NOTIFYICONDATAW, NOTIFYICONIDENTIFIER, Shell_NotifyIconGetRect, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, HICON, SM_CXSMICON};
 
@@ -52,12 +52,7 @@ impl Tray {
     }
 
     fn base(&self, id: u32) -> NOTIFYICONDATAW {
-        NOTIFYICONDATAW {
-            cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
-            hWnd: self.hwnd,
-            uID: id,
-            ..Default::default()
-        }
+        NOTIFYICONDATAW { cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32, hWnd: self.hwnd, uID: id, ..Default::default() }
     }
 
     fn icon_size(&self) -> i32 {
@@ -102,7 +97,9 @@ impl Tray {
             }
             if let Some(old) = self.shown.insert(id, Shown { pixels, size, tip, icon }) {
                 // SAFETY: we created this icon and the shell holds its own copy.
-                unsafe { let _ = DestroyIcon(old.icon); }
+                unsafe {
+                    let _ = DestroyIcon(old.icon);
+                }
             }
         }
         let stale: Vec<u32> = self.shown.keys().copied().filter(|k| !wanted.contains(k)).collect();
@@ -114,10 +111,14 @@ impl Tray {
     fn remove(&mut self, id: u32) {
         let nid = self.base(id);
         // SAFETY: deleting our own icon id.
-        unsafe { let _ = Shell_NotifyIconW(NIM_DELETE, &nid); }
+        unsafe {
+            let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
+        }
         if let Some(s) = self.shown.remove(&id) {
             // SAFETY: we created this icon.
-            unsafe { let _ = DestroyIcon(s.icon); }
+            unsafe {
+                let _ = DestroyIcon(s.icon);
+            }
         }
     }
 
@@ -129,7 +130,9 @@ impl Tray {
     pub fn forget_all(&mut self) {
         for (_, s) in self.shown.drain() {
             // SAFETY: we created these icons.
-            unsafe { let _ = DestroyIcon(s.icon); }
+            unsafe {
+                let _ = DestroyIcon(s.icon);
+            }
         }
     }
 
@@ -154,7 +157,9 @@ impl Tray {
             *d = s;
         }
         // SAFETY: modifying our own icon with a fully initialized struct.
-        unsafe { let _ = Shell_NotifyIconW(NIM_MODIFY, &nid); }
+        unsafe {
+            let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+        }
     }
 
     pub fn icon_rect(&self, id: u32) -> Option<RECT> {

@@ -81,7 +81,11 @@ pub(crate) fn protection_summary(p: &Protection, name: &str) -> String {
         parts.push(format!("OCP {}{}", amps(w), p.wire_trigger.map(|t| format!(" for {}", crate::log::secs(t))).unwrap_or_default()));
     }
     if let Some(s) = p.imbalance_limit {
-        parts.push(format!("imbalance {}{}", amps(s), p.imbalance_trigger.map(|t| format!(" for {}", crate::log::secs(t))).unwrap_or_default()));
+        parts.push(format!(
+            "imbalance {}{}",
+            amps(s),
+            p.imbalance_trigger.map(|t| format!(" for {}", crate::log::secs(t))).unwrap_or_default()
+        ));
     }
     if let Some(c) = p.cutoff_after {
         parts.push(format!("power cut {} after alarm", crate::log::secs(c)));

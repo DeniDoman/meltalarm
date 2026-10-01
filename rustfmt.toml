@@ -1,0 +1,4 @@
+# Chosen to match how the code was written before formatting was enforced: wide lines, and short
+# expressions (struct literals, calls, closures) kept on one line while they fit. CI checks it.
+max_width = 140
+use_small_heuristics = "Max"

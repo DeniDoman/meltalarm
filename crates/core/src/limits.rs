@@ -27,8 +27,7 @@ pub struct Limits {
 }
 
 impl Limits {
-    pub const V1: Limits =
-        Limits { rating: 9.5, alarm: 10.5, alarm_delay: Duration::from_secs(4), fast: 12.0, instant: 15.0, uneven: 3.0 };
+    pub const V1: Limits = Limits { rating: 9.5, alarm: 10.5, alarm_delay: Duration::from_secs(4), fast: 12.0, instant: 15.0, uneven: 3.0 };
 }
 
 impl Default for Limits {

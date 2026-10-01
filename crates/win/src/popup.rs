@@ -12,8 +12,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, HWND_TOPMOST, SW_HIDE, SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowPos, ShowWindow,
 };
 
-use crate::card::{HeaderButton, MARGIN, PAD, TOP, W, content_height, dismiss_rect, draw_card, draw_content, header_button_rect};
 use crate::anim::{self, Motion, Transition};
+use crate::card::{HeaderButton, MARGIN, PAD, TOP, W, content_height, dismiss_rect, draw_card, draw_content, header_button_rect};
 use crate::gfx::{Frame, Gfx};
 use crate::palette::theme;
 
@@ -89,7 +89,9 @@ impl Popup {
         self.anchor = anchor.or_else(|| {
             let mut p = POINT::default();
             // SAFETY: valid out pointer.
-            unsafe { let _ = GetCursorPos(&mut p); }
+            unsafe {
+                let _ = GetCursorPos(&mut p);
+            }
             Some(RECT { left: p.x, top: p.y, right: p.x, bottom: p.y })
         });
         self.draw(gfx, view, light);
@@ -126,7 +128,9 @@ impl Popup {
         self.motion = Motion::Still;
         self.frame = None;
         // SAFETY: our own window.
-        unsafe { let _ = ShowWindow(self.hwnd, SW_HIDE); }
+        unsafe {
+            let _ = ShowWindow(self.hwnd, SW_HIDE);
+        }
     }
 
     /// One animation frame; `true` while it still moves.
@@ -180,7 +184,9 @@ impl Popup {
         let anchor = self.anchor.unwrap_or_else(|| {
             let mut p = POINT::default();
             // SAFETY: valid out pointer.
-            unsafe { let _ = GetCursorPos(&mut p); }
+            unsafe {
+                let _ = GetCursorPos(&mut p);
+            }
             RECT { left: p.x, top: p.y, right: p.x, bottom: p.y }
         });
         let center = POINT { x: (anchor.left + anchor.right) / 2, y: (anchor.top + anchor.bottom) / 2 };

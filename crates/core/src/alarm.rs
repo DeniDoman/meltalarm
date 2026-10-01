@@ -23,10 +23,22 @@ pub(crate) enum Cause {
 pub(crate) enum Phase {
     Idle,
     Active,
-    Snoozed { until: Instant, snapshot: Vec<(u8, Cause)> },
-    Cleared { until: Instant, lasted: Duration, reason: String, label: String },
+    Snoozed {
+        until: Instant,
+        snapshot: Vec<(u8, Cause)>,
+    },
+    Cleared {
+        until: Instant,
+        lasted: Duration,
+        reason: String,
+        label: String,
+    },
     /// The strip part runs until `strip_until`, then the alarm part (Spec §8.5).
-    Test { until: Instant, strip_until: Instant, chime: u32 },
+    Test {
+        until: Instant,
+        strip_until: Instant,
+        chime: u32,
+    },
 }
 
 impl Core {
@@ -63,7 +75,8 @@ impl Core {
             return;
         }
         if !active.is_empty() && self.episode_start.is_none() {
-            self.episode_start = self.conns.iter().flat_map(|c| [c.alarm_since, c.guard.overload().map(|o| o.since)]).flatten().min().or(Some(now));
+            self.episode_start =
+                self.conns.iter().flat_map(|c| [c.alarm_since, c.guard.overload().map(|o| o.since)]).flatten().min().or(Some(now));
         }
         if let Some(c) = self.worst_conn() {
             let reason = match c.device_alarm() {
@@ -74,7 +87,12 @@ impl Core {
         }
         let cleared = |core: &Core| {
             let (reason, label) = core.last_alarm.clone().unwrap_or_default();
-            Phase::Cleared { until: now + CLEARED_SHOW, lasted: core.episode_start.map_or(Duration::ZERO, |s| now.duration_since(s)), reason, label }
+            Phase::Cleared {
+                until: now + CLEARED_SHOW,
+                lasted: core.episode_start.map_or(Duration::ZERO, |s| now.duration_since(s)),
+                reason,
+                label,
+            }
         };
         self.phase = match std::mem::replace(&mut self.phase, Phase::Idle) {
             Phase::Idle | Phase::Cleared { .. } | Phase::Test { .. } if !active.is_empty() => Phase::Active,
@@ -222,7 +240,9 @@ impl Core {
             // Both judges: the PSU's limit line, then ours.
             (Some(s), Some(ours)) => (what_of(s), format!("{}\n{ours}", psu_lines(s).pop().unwrap_or_default())),
             (Some(s), None) => (what_of(s), psu_lines(s).join("\n")),
-            (None, Some(ours)) => ("Wire overload · measured by MeltAlarm".to_owned(), format!("{ours}\nThe PSU hasn't raised an alarm yet.")),
+            (None, Some(ours)) => {
+                ("Wire overload · measured by MeltAlarm".to_owned(), format!("{ours}\nThe PSU hasn't raised an alarm yet."))
+            }
             (None, None) => (String::new(), String::new()),
         };
         let (right_label, right_value) = if critical {
@@ -280,7 +300,8 @@ impl Core {
             Phase::Test { strip_until, .. } if now >= strip_until => (false, true),
             _ => return None,
         };
-        let conns: Vec<&Conn> = if test { self.conns.iter().take(1).collect() } else { self.conns.iter().filter(|c| c.in_alarm()).collect() };
+        let conns: Vec<&Conn> =
+            if test { self.conns.iter().take(1).collect() } else { self.conns.iter().filter(|c| c.in_alarm()).collect() };
         let numbers: Vec<String> = conns.iter().map(|c| (c.key.index + 1).to_string()).collect();
         let which = match conns.as_slice() {
             [c] if self.numbered(c) => format!(" on cable {}", numbers[0]),
@@ -308,9 +329,5 @@ impl Core {
 /// The test alarm's sample bars: a bad contact on one wire.
 fn test_bars() -> [WireView; WIRES] {
     let v = [9.9, 9.8, 2.1, 9.7, 9.8, 9.9];
-    std::array::from_fn(|i| WireView {
-        amps: Some(v[i]),
-        level: if i == 2 { Level::Warning } else { Level::Caution },
-        flagged: i == 2,
-    })
+    std::array::from_fn(|i| WireView { amps: Some(v[i]), level: if i == 2 { Level::Warning } else { Level::Caution }, flagged: i == 2 })
 }

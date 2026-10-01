@@ -6,12 +6,12 @@ use std::time::Instant;
 
 use meltalarm_model::ConnectorKey;
 
+use crate::alarm::Phase;
 use crate::guard::{self, GuardEvent, Rule};
 use crate::log::LogEvent;
 use crate::state::{CableNote, Severity};
 use crate::text::{amps, note_time, on, wires_text};
 use crate::view::{CautionView, Notice};
-use crate::alarm::Phase;
 use crate::{Core, Output, STRIP_SHOW};
 
 /// The episode whose peak keeps the connector's cable note up to date while it lasts.
@@ -45,7 +45,10 @@ impl Core {
                     Rule::Sustained => format!(">= {} for {} s", amps(l.alarm), l.alarm_delay.as_secs()),
                 };
                 let imbalance = self.conns[ci].eval.imbalance.map(|s| format!(" | imbalance {}", amps(s))).unwrap_or_default();
-                out.log.push(LogEvent::Overload { conn: label, detail: format!("wire {} = {} · {rule} | wires {wires}{imbalance}", wire + 1, amps(a)) });
+                out.log.push(LogEvent::Overload {
+                    conn: label,
+                    detail: format!("wire {} = {} · {rule} | wires {wires}{imbalance}", wire + 1, amps(a)),
+                });
                 self.conns[ci].live_note = Some(LiveNote::Overload { when: self.when() });
             }
             GuardEvent::OverloadEnd { lasted, peak } => {
@@ -57,7 +60,13 @@ impl Core {
             GuardEvent::CautionStart { wire, amps: a } => {
                 out.log.push(LogEvent::Caution {
                     conn: label,
-                    detail: format!("wire {} = {} above the {} rating for {} s | wires {wires}", wire + 1, amps(a), amps(l.rating), guard::QUALIFY.as_secs()),
+                    detail: format!(
+                        "wire {} = {} above the {} rating for {} s | wires {wires}",
+                        wire + 1,
+                        amps(a),
+                        amps(l.rating),
+                        guard::QUALIFY.as_secs()
+                    ),
                 });
                 if !matches!(self.conns[ci].live_note, Some(LiveNote::Overload { .. })) {
                     self.conns[ci].live_note = Some(LiveNote::Caution { when: self.when() });
@@ -78,7 +87,12 @@ impl Core {
             GuardEvent::UnevenStart { imbalance, avg, low, high } => {
                 out.log.push(LogEvent::Uneven {
                     conn: label.clone(),
-                    detail: format!("imbalance {} at {} average for {} s | wires {wires}", amps(imbalance), amps(avg), guard::QUALIFY.as_secs()),
+                    detail: format!(
+                        "imbalance {} at {} average for {} s | wires {wires}",
+                        amps(imbalance),
+                        amps(avg),
+                        guard::QUALIFY.as_secs()
+                    ),
                 });
                 let text = format!(
                     "Uneven load{}: one wire carried {} while the others carried up to {}. Check that the cable is fully seated at both ends.",

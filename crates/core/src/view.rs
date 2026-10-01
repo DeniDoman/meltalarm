@@ -69,10 +69,16 @@ pub fn bar_share(amps: f32, limit: f32) -> f32 {
 pub enum Health {
     Starting,
     /// A supported device is present but not answering yet (before the first connection).
-    Connecting { since: Instant },
+    Connecting {
+        since: Instant,
+    },
     Live,
-    Stale { age: Duration },
-    NoData { since: Instant },
+    Stale {
+        age: Duration,
+    },
+    NoData {
+        since: Instant,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -290,7 +296,10 @@ impl Core {
             notes.push(Note { kind: NoteKind::Info, text: "Reading the PSU…".into() });
         }
         if safeguard_off {
-            notes.push(Note { kind: NoteKind::Caution, text: format!("PSU {} is OFF: the PSU won't cut power. MeltAlarm still alarms.", self.protection_name()) });
+            notes.push(Note {
+                kind: NoteKind::Caution,
+                text: format!("PSU {} is OFF: the PSU won't cut power. MeltAlarm still alarms.", self.protection_name()),
+            });
         }
         for f in &self.faults {
             notes.push(Note { kind: NoteKind::Caution, text: format!("PSU fault: {}", fault_name(f)) });
@@ -456,7 +465,11 @@ impl Core {
             audio: self.audio_at(now),
             settings: self.settings.clone(),
             connecting: self.source.is_none().then(|| {
-                if self.pending.is_some() { "MeltAlarm · connecting to the PSU…".into() } else { "MeltAlarm · looking for the PSU…".into() }
+                if self.pending.is_some() {
+                    "MeltAlarm · connecting to the PSU…".into()
+                } else {
+                    "MeltAlarm · looking for the PSU…".into()
+                }
             }),
             notice: self.notice.clone(),
             caution: self.caution_view(now),

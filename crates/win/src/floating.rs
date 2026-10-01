@@ -10,17 +10,16 @@ use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, GetCursorPos, HWND_TOPMOST, IDC_ARROW, IDC_HAND, IDC_SIZENESW,
-    IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE, KillTimer, LoadCursorW, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SetCursor, SetTimer, SetWindowPos, ShowWindow,
-    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DestroyWindow, GetCursorPos, HWND_TOPMOST, IDC_ARROW, IDC_HAND, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE,
+    KillTimer, LoadCursorW, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SetCursor, SetTimer,
+    SetWindowPos, ShowWindow, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
 
-use crate::gfx::{Align, Gfx, Painter, num};
-use crate::placement::{self, Layout, Placement, Placements};
 use crate::card::{self, HeaderButton, MARGIN, PAD, TOP};
+use crate::gfx::{Align, Gfx, Painter, num};
 use crate::palette::{self, Theme, level_colors};
+use crate::placement::{self, Layout, Placement, Placements};
 
 pub const CLASS: PCWSTR = w!("MeltAlarmFloat");
 /// DESIGN.md "Floating monitor": the longest header ("GPU power cable" + "Not connected") fits
@@ -122,12 +121,8 @@ impl Floating {
         if forget {
             self.places.save();
         }
-        let stale: Vec<ConnectorKey> = self
-            .wins
-            .keys()
-            .filter(|k| !view.connectors.iter().any(|c| c.tracked && &c.key == *k))
-            .cloned()
-            .collect();
+        let stale: Vec<ConnectorKey> =
+            self.wins.keys().filter(|k| !view.connectors.iter().any(|c| c.tracked && &c.key == *k)).cloned().collect();
         for k in stale {
             self.destroy(&k);
         }
@@ -328,8 +323,20 @@ impl Floating {
         if !(-EDGE..cw + EDGE).contains(&x) || !(-EDGE..ch + EDGE).contains(&y) {
             return Hit::Nothing;
         }
-        let sx = if x < EDGE { -1 } else if x > cw - EDGE { 1 } else { 0 };
-        let sy = if y < EDGE { -1 } else if y > ch - EDGE { 1 } else { 0 };
+        let sx = if x < EDGE {
+            -1
+        } else if x > cw - EDGE {
+            1
+        } else {
+            0
+        };
+        let sy = if y < EDGE {
+            -1
+        } else if y > ch - EDGE {
+            1
+        } else {
+            0
+        };
         if sx != 0 || sy != 0 { Hit::Edge(sx, sy) } else { Hit::Move }
     }
 

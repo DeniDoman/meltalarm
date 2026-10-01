@@ -10,14 +10,7 @@ fn v(s: &str) -> Version {
 }
 
 fn facts(flag: Flag, this: &str, installed: Option<&str>, this_is_installed: bool, running: Instance) -> Facts {
-    Facts {
-        policy: Policy::SelfManaged,
-        flag,
-        this_version: v(this),
-        this_is_installed,
-        installed: installed.map(v),
-        running,
-    }
+    Facts { policy: Policy::SelfManaged, flag, this_version: v(this), this_is_installed, installed: installed.map(v), running }
 }
 
 #[test]
@@ -126,9 +119,7 @@ type Journal = Rc<RefCell<Vec<String>>>;
 
 fn plan(len: usize, fail_at: Option<usize>) -> (Vec<Box<dyn Step>>, Journal) {
     let journal = Rc::new(RefCell::new(vec![]));
-    let steps = (0..len)
-        .map(|n| Box::new(Fake { n, fail: Some(n) == fail_at, journal: journal.clone() }) as Box<dyn Step>)
-        .collect();
+    let steps = (0..len).map(|n| Box::new(Fake { n, fail: Some(n) == fail_at, journal: journal.clone() }) as Box<dyn Step>).collect();
     (steps, journal)
 }
 

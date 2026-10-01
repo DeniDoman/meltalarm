@@ -112,7 +112,10 @@ mod tests {
     fn only_overridden_limits_are_written() {
         let s = Settings::default();
         assert!(!s.to_file().contains("limit_"));
-        let s = Settings { limits: LimitOverrides { alarm: Some(11.0), alarm_seconds: Some(3.0), ..Default::default() }, ..Settings::default() };
+        let s = Settings {
+            limits: LimitOverrides { alarm: Some(11.0), alarm_seconds: Some(3.0), ..Default::default() },
+            ..Settings::default()
+        };
         let text = s.to_file();
         assert!(text.contains("limit_alarm = 11\n") && text.contains("limit_alarm_seconds = 3\n"), "{text}");
         assert_eq!(Settings::from_file(&text), s);

@@ -84,10 +84,7 @@ impl Ctx {
 
     fn not_found_message(&self) -> String {
         let names: Vec<&str> = self.drivers.iter().map(|d| d.name()).collect();
-        format!(
-            "MeltAlarm supports only {} power supplies connected by USB. No supported PSU was found.",
-            names.join(", ")
-        )
+        format!("MeltAlarm supports only {} power supplies connected by USB. No supported PSU was found.", names.join(", "))
     }
 
     fn run(&mut self) -> Result<(), Stop> {

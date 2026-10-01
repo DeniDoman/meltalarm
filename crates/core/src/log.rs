@@ -5,32 +5,88 @@ use std::time::Duration;
 #[derive(Clone, Debug, PartialEq)]
 pub enum LogEvent {
     /// The cable limits in effect (Spec §6.1), once at start.
-    Limits { text: String },
+    Limits {
+        text: String,
+    },
     /// MeltAlarm's overload alarm (Spec §6.3) and its end.
-    Overload { conn: String, detail: String },
-    OverloadEnd { conn: String, lasted: Duration, detail: String },
+    Overload {
+        conn: String,
+        detail: String,
+    },
+    OverloadEnd {
+        conn: String,
+        lasted: Duration,
+        detail: String,
+    },
     /// A wire-above-rating caution qualified (Spec §6.4), and the episode's end.
-    Caution { conn: String, detail: String },
-    CautionEnd { conn: String, lasted: Duration, detail: String },
+    Caution {
+        conn: String,
+        detail: String,
+    },
+    CautionEnd {
+        conn: String,
+        lasted: Duration,
+        detail: String,
+    },
     /// An uneven-load advisory qualified, and the episode's end.
-    Uneven { conn: String, detail: String },
-    UnevenEnd { conn: String, lasted: Duration, detail: String },
-    PsuAlarm { conn: String, detail: String },
-    PsuRaw { diagnostic: String },
-    PsuClear { conn: String, lasted: Duration },
-    PsuFlag { fault: String, set: bool },
+    Uneven {
+        conn: String,
+        detail: String,
+    },
+    UnevenEnd {
+        conn: String,
+        lasted: Duration,
+        detail: String,
+    },
+    PsuAlarm {
+        conn: String,
+        detail: String,
+    },
+    PsuRaw {
+        diagnostic: String,
+    },
+    PsuClear {
+        conn: String,
+        lasted: Duration,
+    },
+    PsuFlag {
+        fault: String,
+        set: bool,
+    },
     NoData,
-    DataBack { after: Duration },
-    Config { text: String },
-    ConfigWarning { text: String },
-    MonitoringStopped { reason: String },
+    DataBack {
+        after: Duration,
+    },
+    Config {
+        text: String,
+    },
+    ConfigWarning {
+        text: String,
+    },
+    MonitoringStopped {
+        reason: String,
+    },
     /// Startup ended without monitoring (Spec §5.1).
-    NotStarted { reason: String },
-    NotConnected { reason: String },
-    Connected { model: String, after: Duration },
-    Installed { version: String, autostart: bool },
+    NotStarted {
+        reason: String,
+    },
+    NotConnected {
+        reason: String,
+    },
+    Connected {
+        model: String,
+        after: Duration,
+    },
+    Installed {
+        version: String,
+        autostart: bool,
+    },
     /// `downgrade`: an older file replaced a newer one (rollback, Spec §4.6).
-    Updated { from: String, to: String, downgrade: bool },
+    Updated {
+        from: String,
+        to: String,
+        downgrade: bool,
+    },
 }
 
 pub fn secs(d: Duration) -> String {
@@ -60,10 +116,9 @@ impl LogEvent {
             LogEvent::NotStarted { reason } => ("STOPPED", format!("Monitoring not started: {reason}")),
             LogEvent::NotConnected { reason } => ("NOT CONNECTED", format!("{reason} — still trying")),
             LogEvent::Connected { model, after } => ("CONNECTED", format!("{model} after {}", secs(*after))),
-            LogEvent::Installed { version, autostart } => (
-                "INSTALL",
-                format!("MeltAlarm {version} installed · {}", if *autostart { "starts with Windows" } else { "manual start" }),
-            ),
+            LogEvent::Installed { version, autostart } => {
+                ("INSTALL", format!("MeltAlarm {version} installed · {}", if *autostart { "starts with Windows" } else { "manual start" }))
+            }
             LogEvent::Updated { from, to, downgrade: false } => ("INSTALL", format!("updated {from} → {to}")),
             LogEvent::Updated { from, to, downgrade: true } => ("INSTALL", format!("replaced {from} with {to}")),
         };

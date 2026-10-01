@@ -76,14 +76,14 @@ impl Source for SimSource {
             _ => match t {
                 0..8 => (IDLE, 0, false),
                 8..20 => (LOAD, 0, false),
-                20..34 => (HOT, 0, false),     // caution strip at 30
-                34..44 => (OVER, 0, false),    // our alarm at 35
-                44..56 => (LOAD, 0, false),    // cleared
-                56..70 => (UNEVEN, 0, false),  // advisory at 66
+                20..34 => (HOT, 0, false),    // caution strip at 30
+                34..44 => (OVER, 0, false),   // our alarm at 35
+                44..56 => (LOAD, 0, false),   // cleared
+                56..70 => (UNEVEN, 0, false), // advisory at 66
                 70..90 => (LOAD, 0, false),
-                90..115 => (BAD, 2, false),    // the PSU's alarm
+                90..115 => (BAD, 2, false), // the PSU's alarm
                 115..125 => (LOAD, 0, false),
-                125..129 => (LOAD, 0, true),   // monitoring lost
+                125..129 => (LOAD, 0, true), // monitoring lost
                 _ => (LOAD, 0, false),
             },
         };

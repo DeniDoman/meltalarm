@@ -16,10 +16,10 @@ mod gfx;
 mod glyph;
 mod lifecycle;
 mod menu;
+mod overlay;
 mod paint;
 mod palette;
 mod placement;
-mod overlay;
 mod popup;
 mod strip;
 mod sys;
@@ -30,16 +30,15 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use meltalarm_core::{Glyph, LogEvent, UserAction, ViewModel};
-use meltalarm_model::ConnectorKey;
 use meltalarm_lifecycle::Autostart;
+use meltalarm_model::ConnectorKey;
 use meltalarm_runtime::{Host, Lifecycle, LogSink, Paths, Runtime, Update};
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, RegisterHotKey, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent, UnregisterHotKey,
-    VK_ESCAPE,
+    MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, RegisterHotKey, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent, UnregisterHotKey, VK_ESCAPE,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::{PCWSTR, w};
@@ -398,9 +397,10 @@ fn run_deferred(hwnd: HWND, d: Deferred) {
                 r.0 as u32
             };
             if cmd != 0
-                && let Some(Some(next)) = with_app(|a| a.on_command(cmd)) {
-                    run_deferred(hwnd, next);
-                }
+                && let Some(Some(next)) = with_app(|a| a.on_command(cmd))
+            {
+                run_deferred(hwnd, next);
+            }
         }
         Deferred::ConfirmExit => {
             if sys::confirm(hwnd, APP_NAME, "Exit MeltAlarm?\n\nMonitoring of the GPU power cable will stop until MeltAlarm runs again.") {
@@ -480,9 +480,16 @@ extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
         // Never take focus from the game.
         WM_MOUSEACTIVATE => return LRESULT(MA_NOACTIVATE as isize),
         WM_MOUSEMOVE => {
-            let mut tme = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
+            let mut tme = TRACKMOUSEEVENT {
+                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                dwFlags: TME_LEAVE,
+                hwndTrack: hwnd,
+                dwHoverTime: 0,
+            };
             // SAFETY: valid struct for our window.
-            unsafe { let _ = TrackMouseEvent(&mut tme); }
+            unsafe {
+                let _ = TrackMouseEvent(&mut tme);
+            }
             with_app(|a| {
                 let hover = a.overlay.hit_button(hwnd, x, y).then_some(hwnd);
                 if hover != a.overlay.hover {
@@ -518,7 +525,9 @@ extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
                 Some(None) => {}
                 // App busy (re-entrant call): retry once the current handler returns.
                 // SAFETY: re-posting our own message.
-                None => unsafe { let _ = PostMessageW(Some(hwnd), msg, wp, lp); },
+                None => unsafe {
+                    let _ = PostMessageW(Some(hwnd), msg, wp, lp);
+                },
             }
             return LRESULT(0);
         }
@@ -623,8 +632,9 @@ fn main() {
 
     // SAFETY: creating our hidden main window and the (hidden) popup window.
     let (hwnd, popup_hwnd, taskbar_created) = unsafe {
-        let hwnd = CreateWindowExW(WINDOW_EX_STYLE(0), lifecycle::MAIN_CLASS, w!("MeltAlarm"), WS_POPUP, 0, 0, 0, 0, None, None, None, None)
-            .expect("main window");
+        let hwnd =
+            CreateWindowExW(WINDOW_EX_STYLE(0), lifecycle::MAIN_CLASS, w!("MeltAlarm"), WS_POPUP, 0, 0, 0, 0, None, None, None, None)
+                .expect("main window");
         let popup = CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             w!("MeltAlarmPopup"),
@@ -659,7 +669,9 @@ fn main() {
         wall_clock: sys::wall_clock,
         waker: Box::new(move || {
             // SAFETY: posting to our window from the acquisition thread is allowed.
-            unsafe { let _ = PostMessageW(Some(HWND(raw as *mut _)), WM_WAKE, WPARAM(0), LPARAM(0)); }
+            unsafe {
+                let _ = PostMessageW(Some(HWND(raw as *mut _)), WM_WAKE, WPARAM(0), LPARAM(0));
+            }
         }),
     });
     let gfx = gfx::Gfx::new().expect("Direct2D/DirectWrite");

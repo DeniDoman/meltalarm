@@ -10,23 +10,20 @@ use std::process::Command;
 use std::time::Duration;
 
 use meltalarm_core::{LogEvent, Settings};
-use meltalarm_lifecycle::{
-    self as lc, Autostart, Facts, Failed, Flag, Instance, Instances, Launch, Policy, Running, Step, Version,
-};
+use meltalarm_lifecycle::{self as lc, Autostart, Facts, Failed, Flag, Instance, Instances, Launch, Policy, Running, Step, Version};
 use meltalarm_runtime::{LogSink, Paths, SettingsStore};
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, WAIT_OBJECT_0, WPARAM};
 use windows::Win32::Storage::FileSystem::{
-    GetFileVersionInfoSizeW, GetFileVersionInfoW, MOVEFILE_DELAY_UNTIL_REBOOT, MoveFileExW, VS_FIXEDFILEINFO,
-    VerQueryValueW,
+    GetFileVersionInfoSizeW, GetFileVersionInfoW, MOVEFILE_DELAY_UNTIL_REBOOT, MoveFileExW, VS_FIXEDFILEINFO, VerQueryValueW,
 };
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemFree, IPersistFile};
 use windows::Win32::System::Registry::{
-    HKEY, HKEY_LOCAL_MACHINE, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_REG_SZ, RegCloseKey,
-    RegCreateKeyExW, RegDeleteTreeW, RegGetValueW, RegSetValueExW,
+    HKEY, HKEY_LOCAL_MACHINE, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_REG_SZ, RegCloseKey, RegCreateKeyExW,
+    RegDeleteTreeW, RegGetValueW, RegSetValueExW,
 };
 use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
-    QueryFullProcessImageNameW, TerminateProcess, WaitForSingleObject,
+    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, QueryFullProcessImageNameW,
+    TerminateProcess, WaitForSingleObject,
 };
 use windows::Win32::UI::Controls::{
     TASKDIALOG_BUTTON, TASKDIALOGCONFIG, TD_ERROR_ICON, TD_INFORMATION_ICON, TD_SHIELD_ICON, TD_WARNING_ICON,
@@ -36,8 +33,8 @@ use windows::Win32::UI::Shell::{
     FOLDERID_CommonPrograms, FOLDERID_ProgramFiles, IShellLinkW, KF_FLAG_DEFAULT, SHGetKnownFolderPath, ShellLink,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AllowSetForegroundWindow, FindWindowW, GetWindowThreadProcessId, PostMessageW, RegisterWindowMessageW,
-    SMTO_ABORTIFHUNG, SendMessageTimeoutW,
+    AllowSetForegroundWindow, FindWindowW, GetWindowThreadProcessId, PostMessageW, RegisterWindowMessageW, SMTO_ABORTIFHUNG,
+    SendMessageTimeoutW,
 };
 use windows::core::{BOOL, GUID, HSTRING, Interface, PCWSTR, PWSTR, w};
 
@@ -147,9 +144,7 @@ impl Win32Running {
     fn send(&self, cmd: usize) -> Option<isize> {
         let mut result = 0usize;
         // SAFETY: a window of another process; bounded by the timeout.
-        let ok = unsafe {
-            SendMessageTimeoutW(self.hwnd, self.msg, WPARAM(cmd), LPARAM(0), SMTO_ABORTIFHUNG, 2000, Some(&mut result))
-        };
+        let ok = unsafe { SendMessageTimeoutW(self.hwnd, self.msg, WPARAM(cmd), LPARAM(0), SMTO_ABORTIFHUNG, 2000, Some(&mut result)) };
         (ok.0 != 0).then_some(result as isize)
     }
 }
@@ -214,8 +209,7 @@ impl Instances for Win32Instances {
             let hwnd = FindWindowW(MAIN_CLASS, PCWSTR::null()).ok()?;
             let mut pid = 0;
             GetWindowThreadProcessId(hwnd, Some(&mut pid));
-            (pid != 0 && pid != std::process::id())
-                .then(|| Box::new(Win32Running { hwnd, pid, msg: self.msg }) as Box<dyn Running>)
+            (pid != 0 && pid != std::process::id()).then(|| Box::new(Win32Running { hwnd, pid, msg: self.msg }) as Box<dyn Running>)
         }
     }
 }
@@ -338,9 +332,7 @@ fn reg_sz(key: HKEY, name: &str, value: &str) -> Result<(), String> {
 
 fn reg_dword(key: HKEY, name: &str, value: u32) -> Result<(), String> {
     // SAFETY: open key and a 4-byte buffer.
-    unsafe {
-        RegSetValueExW(key, &HSTRING::from(name), None, REG_DWORD, Some(&value.to_le_bytes())).ok().map_err(|e| e.to_string())
-    }
+    unsafe { RegSetValueExW(key, &HSTRING::from(name), None, REG_DWORD, Some(&value.to_le_bytes())).ok().map_err(|e| e.to_string()) }
 }
 
 fn installed_apps_version() -> Option<String> {
@@ -514,11 +506,8 @@ fn dialog(icon: PCWSTR, heading: &str, text: &str, buttons: &[(i32, &str)], chec
     let heading = HSTRING::from(heading);
     let text = HSTRING::from(text);
     let labels: Vec<HSTRING> = buttons.iter().map(|(_, l)| HSTRING::from(*l)).collect();
-    let btns: Vec<TASKDIALOG_BUTTON> = buttons
-        .iter()
-        .zip(&labels)
-        .map(|((id, _), l)| TASKDIALOG_BUTTON { nButtonID: *id, pszButtonText: PCWSTR(l.as_ptr()) })
-        .collect();
+    let btns: Vec<TASKDIALOG_BUTTON> =
+        buttons.iter().zip(&labels).map(|((id, _), l)| TASKDIALOG_BUTTON { nButtonID: *id, pszButtonText: PCWSTR(l.as_ptr()) }).collect();
     let check_text = check.map(|(t, _)| HSTRING::from(t));
     let mut flags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW;
     if check.is_some_and(|(_, on)| on) {
@@ -566,7 +555,9 @@ fn failure_text(f: &Failed) -> String {
 
 pub enum Start {
     /// Start monitoring in this process.
-    Monitor { portable: bool },
+    Monitor {
+        portable: bool,
+    },
     Exit,
 }
 

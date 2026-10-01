@@ -63,10 +63,7 @@ pub fn message(title: &str, text: &str, error: bool) {
 
 pub fn confirm(owner: HWND, title: &str, text: &str) -> bool {
     // SAFETY: as above.
-    unsafe {
-        MessageBoxW(Some(owner), &HSTRING::from(text), &HSTRING::from(title), MB_YESNO | MB_ICONWARNING | MB_TOPMOST)
-            == IDYES
-    }
+    unsafe { MessageBoxW(Some(owner), &HSTRING::from(text), &HSTRING::from(title), MB_YESNO | MB_ICONWARNING | MB_TOPMOST) == IDYES }
 }
 
 pub fn open_path(path: &std::path::Path) {

@@ -85,12 +85,15 @@ impl H {
         };
         let r = Report {
             at: self.now,
-            readings: Some(vec![
-                ConnectorReading { index: 0, wires: c1.map(Some) },
-                ConnectorReading { index: 1, wires: c2.map(Some) },
-            ]),
+            readings: Some(vec![ConnectorReading { index: 0, wires: c1.map(Some) }, ConnectorReading { index: 1, wires: c2.map(Some) }]),
             verdicts: Some(
-                (0..2).map(|i| Verdict { index: i as u8, status: st(status[i]), flagged: [false, false, status[i] == 2, false, false, false] }).collect(),
+                (0..2)
+                    .map(|i| Verdict {
+                        index: i as u8,
+                        status: st(status[i]),
+                        flagged: [false, false, status[i] == 2, false, false, false],
+                    })
+                    .collect(),
             ),
             faults: Some(vec![]),
             protection: protection.then(prot),
@@ -153,7 +156,11 @@ fn first_report_tracks_the_connector_in_use_and_logs_limits_and_config() {
     assert_eq!(v.connectors[1].tooltip, "MeltAlarm · Cable 2 · Not connected", "untracked: numbered");
     assert_eq!(v.connectors[1].full_label, "GPU power cable 2");
     let c2 = &v.connectors[1];
-    assert_eq!((c2.status_kind, c2.status_text.as_str(), c2.summary.as_str()), (StatusKind::NotConnected, "Not connected", "No current on any wire"), "never OK without current");
+    assert_eq!(
+        (c2.status_kind, c2.status_text.as_str(), c2.summary.as_str()),
+        (StatusKind::NotConnected, "Not connected", "No current on any wire"),
+        "never OK without current"
+    );
     assert_eq!(v.connectors[0].psu_status, "Normal");
     assert_eq!((v.connectors[0].bar_limit, v.connectors[0].bar_rating), (Some(10.5), Some(9.5)));
 }
@@ -207,7 +214,10 @@ fn our_overload_alarms_without_the_psu_and_says_so() {
     assert!(c.wires[0].flagged, "the overloaded wire is knocked out in the alarm tile");
     assert_eq!(c.tooltip, "MeltAlarm · ALARM: wire overload");
     assert_eq!(h.count("OVERLOAD"), 1);
-    assert!(h.log.iter().any(|e| e.format("T").contains("GPU power cable 1 | wire 1 = 12.6 A · 2 readings >= 12.0 A")), "the log keeps the number and the wire");
+    assert!(
+        h.log.iter().any(|e| e.format("T").contains("GPU power cable 1 | wire 1 = 12.6 A · 2 readings >= 12.0 A")),
+        "the log keeps the number and the wire"
+    );
 
     // The note follows the peak; the alarm clears when every wire is below the rating.
     h.tick(pin1(13.1), [0, 0]);
@@ -247,7 +257,10 @@ fn a_caution_shows_the_strip_once_with_one_chime_and_leaves_a_note() {
     assert!(h.view().caution.is_none(), "not yet 10 s");
     h.ticks(1, pin1(9.9));
     let s = h.view().caution.expect("strip");
-    assert_eq!((s.place.as_deref(), s.what.as_str(), s.action.as_str()), (None, "A wire at 9.9 A, above the 9.5 A rating", "Ease the GPU load"));
+    assert_eq!(
+        (s.place.as_deref(), s.what.as_str(), s.action.as_str()),
+        (None, "A wire at 9.9 A, above the 9.5 A rating", "Ease the GPU load")
+    );
     assert_eq!(h.count("CAUTION"), 1);
     assert_eq!(h.note().unwrap().severity, Severity::Caution);
     let c = &h.view().connectors[0];

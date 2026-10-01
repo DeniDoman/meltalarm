@@ -1,7 +1,7 @@
 //! End-to-end through the real acquisition thread with a fake driver (no hardware).
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use meltalarm_model::*;

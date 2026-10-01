@@ -2,8 +2,8 @@
 //! exists only while the alarm sounds (SAPI memory is released afterwards). Also the caution
 //! chime (DESIGN.md "Caution chime"), synthesized once in memory.
 
-use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -50,10 +50,7 @@ impl Audio {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
         let s = script.clone();
-        let thread = std::thread::Builder::new()
-            .name("meltalarm-audio".into())
-            .spawn(move || play(&s, &flag))
-            .expect("spawn audio thread");
+        let thread = std::thread::Builder::new().name("meltalarm-audio".into()).spawn(move || play(&s, &flag)).expect("spawn audio thread");
         self.playing = Some(Playing { script, stop, thread });
     }
 
@@ -75,7 +72,9 @@ impl Audio {
         if let Some(p) = self.playing.take() {
             p.stop.store(true, Ordering::SeqCst);
             // SAFETY: a NULL sound stops any sound PlaySound is playing in this process.
-            unsafe { let _ = PlaySoundW(PCWSTR::null(), None, SND_NODEFAULT); }
+            unsafe {
+                let _ = PlaySoundW(PCWSTR::null(), None, SND_NODEFAULT);
+            }
             let _ = p.thread.join();
         }
     }
