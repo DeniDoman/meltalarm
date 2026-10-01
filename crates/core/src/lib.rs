@@ -35,7 +35,7 @@ pub use view::*;
 
 use alarm::Phase;
 use ladder::{LiveNote, Strip};
-use text::{cable_label, on, protection_summary, status_name, wires_text};
+use text::{cable_label, fault_name, on, protection_summary, status_name, wires_text};
 
 const NO_DATA_AFTER: u32 = 3;
 pub(crate) const STALE_AFTER: Duration = Duration::from_millis(2500);
@@ -394,14 +394,14 @@ impl Core {
         if let Some(faults) = r.faults {
             let new: Vec<Fault> = faults.iter().filter(|f| !self.faults.contains(f)).cloned().collect();
             for f in &new {
-                out.log.push(LogEvent::PsuFlag { fault: f.to_string(), set: true });
+                out.log.push(LogEvent::PsuFlag { fault: fault_name(f), set: true });
             }
             for f in self.faults.iter().filter(|f| !faults.contains(f)) {
-                out.log.push(LogEvent::PsuFlag { fault: f.to_string(), set: false });
+                out.log.push(LogEvent::PsuFlag { fault: fault_name(f), set: false });
             }
             self.faults = faults;
             if let Some(f) = new.first() {
-                self.raise_caution(None, format!("PSU fault: {f}"), "The PSU may shut down".into(), now);
+                self.raise_caution(None, format!("PSU fault: {}", fault_name(f)), "The PSU may shut down".into(), now);
             }
         }
 

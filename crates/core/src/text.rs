@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use meltalarm_model::{DeviceStatus, Protection, WIRES};
+use meltalarm_model::{DeviceStatus, Fault, Protection, WIRES};
 
 /// The name in the log and wherever a number is needed: "GPU power cable 1" (Spec §7.0).
 pub(crate) fn cable_label(index: u8) -> String {
@@ -87,4 +87,15 @@ pub(crate) fn protection_summary(p: &Protection, name: &str) -> String {
         parts.push(format!("power cut {} after alarm", crate::log::secs(c)));
     }
     parts.join(" · ")
+}
+
+/// A device fault in words, for the log, the flyout and the caution strip.
+pub(crate) fn fault_name(f: &Fault) -> String {
+    match f {
+        Fault::OverTemperature => "OTP (PSU over-temperature)".into(),
+        Fault::FanFailure => "Fan failure".into(),
+        Fault::OverPower => "OPP (PSU over-power)".into(),
+        Fault::RailOverCurrent(rail) => format!("OCP on the {rail} rail"),
+        Fault::Other(s) => s.clone(),
+    }
 }

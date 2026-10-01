@@ -150,24 +150,13 @@ pub struct Protection {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// A non-cable device fault. `Other` carries the device's own words.
 pub enum Fault {
     OverTemperature,
     FanFailure,
     OverPower,
     RailOverCurrent(&'static str),
     Other(String),
-}
-
-impl fmt::Display for Fault {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Fault::OverTemperature => f.write_str("OTP (PSU over-temperature)"),
-            Fault::FanFailure => f.write_str("Fan failure"),
-            Fault::OverPower => f.write_str("OPP (PSU over-power)"),
-            Fault::RailOverCurrent(rail) => write!(f, "OCP on the {rail} rail"),
-            Fault::Other(s) => f.write_str(s),
-        }
-    }
 }
 
 #[cfg(test)]

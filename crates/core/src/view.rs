@@ -7,7 +7,7 @@ use meltalarm_model::{ConnectorKey, WIRES};
 
 use crate::levels::Level;
 use crate::settings::Settings;
-use crate::text::{amps, protection_summary, short_status_name, status_name};
+use crate::text::{amps, fault_name, protection_summary, short_status_name, status_name};
 use crate::{Conn, Core, STALE_AFTER};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -285,7 +285,7 @@ impl Core {
             notes.push(Note { kind: NoteKind::Caution, text: format!("PSU {} is OFF: the PSU won't cut power. MeltAlarm still alarms.", self.protection_name()) });
         }
         for f in &self.faults {
-            notes.push(Note { kind: NoteKind::Caution, text: format!("PSU fault: {f}") });
+            notes.push(Note { kind: NoteKind::Caution, text: format!("PSU fault: {}", fault_name(f)) });
         }
         if !alarm && !no_data {
             if let Some((_, a)) = c.eval.max.filter(|&(_, a)| a >= l.rating) {
@@ -435,7 +435,7 @@ impl Core {
             model: format!("{} {}", s.vendor, s.model),
             firmware: s.firmware.clone(),
             protection: self.protection.as_ref().map_or_else(|| "Reading…".into(), |p| protection_summary(p, self.protection_name())),
-            faults: self.faults.iter().map(|f| f.to_string()).collect(),
+            faults: self.faults.iter().map(fault_name).collect(),
         });
         ViewModel {
             health: self.health(now),
