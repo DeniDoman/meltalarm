@@ -224,7 +224,7 @@ fn above_notes(c: &ConnectorView) -> f32 {
     if c.alarm_reason.is_some() {
         y += 36.0 + 14.0;
     }
-    y + 16.0 + 10.0 + BAR_H + 6.0 + 20.0 + 16.0 + 14.0
+    y + 16.0 + 10.0 + BAR_H + 6.0 + 20.0 + 14.0
 }
 
 const DISMISS: &str = "Dismiss";
@@ -342,41 +342,18 @@ pub(crate) fn draw_content(p: &Painter, t: &Theme, c: &ConnectorView, x: f32, mu
     p.text("Current per wire, A", ui(12.0, 400), x, y, w, 16.0, t.fg3, 1.0, Align::Left);
     y += 16.0 + 10.0;
 
-    // Bars: full scale = the alarm limit; dashed line at the rating (DESIGN.md "Popup").
-    let label_w = 30.0;
-    let area_w = w - label_w - 6.0;
-    let col = area_w / 6.0;
+    // Cut bars, no wire numbers (DESIGN.md "Cut bars").
+    let col = w / 6.0;
     let stale = if c.stale { 0.45 } else { 1.0 };
-    // The top of the track is the alarm limit (labelled, no line); the rating is dashed, its
-    // label under the line so the two labels never touch.
-    if let Some(limit) = c.bar_limit {
-        p.text(&trim(limit), num(10.0, 400), x + area_w + 6.0, y - 7.0, label_w, 14.0, t.warn, 1.0, Align::Left);
-        if let Some(cl) = c.caution_line {
-            let ly = y + BAR_H * (1.0 - cl / limit);
-            p.dashed_hline(x, x + area_w, ly, t.caution, 0.7);
-            p.text(&trim(cl), num(10.0, 400), x + area_w + 6.0, ly + 1.0, label_w, 14.0, t.caution, 1.0, Align::Left);
-        }
-    }
     for (i, wv) in c.wires.iter().enumerate() {
         let cx = x + col * i as f32 + col / 2.0;
         let (bar, txt) = level_colors(t, wv.level);
-        if wv.amps.is_some() {
-            p.fill_rrect(cx - 7.0, y, 14.0, BAR_H, 7.0, t.track.0, t.track.1);
-        } else {
-            p.stroke_rrect(cx - 7.0, y + 0.5, 14.0, BAR_H - 1.0, 7.0, t.fg3, 0.6, 1.0);
-        }
-        if let (Some(a), Some(limit)) = (wv.amps, c.bar_limit) {
-            let fill = (a / limit).clamp(0.0, 1.0) * BAR_H;
-            if fill > 0.5 {
-                p.fill_rrect(cx - 7.0, y + BAR_H - fill, 14.0, fill, 7.0_f32.min(fill / 2.0), bar, stale);
-            }
-        }
+        draw_cut_bar(p, cx - 7.0, y, 14.0, BAR_H, wv.amps, c.bar_limit, c.caution_line, t.track, bar, stale, t.fg3);
         let value = wv.amps.map_or("—".to_owned(), |a| format!("{a:.1}"));
         let vcolor = if wv.amps.is_some() { txt } else { t.fg3 };
         p.text(&value, num(16.0, 600), cx - col / 2.0, y + BAR_H + 6.0, col, 20.0, vcolor, stale, Align::Center);
-        p.text(&(i + 1).to_string(), ui(11.0, 400), cx - col / 2.0, y + BAR_H + 26.0, col, 16.0, t.fg3, 1.0, Align::Center);
     }
-    y += BAR_H + 6.0 + 20.0 + 16.0 + 14.0;
+    y += BAR_H + 6.0 + 20.0 + 14.0;
 
     for n in &c.notes {
         let (bg, a, fg) = if n.kind == NoteKind::Caution { t.note_caution } else { t.note_info };
@@ -398,12 +375,11 @@ pub(crate) fn draw_content(p: &Painter, t: &Theme, c: &ConnectorView, x: f32, mu
 
     p.line(x, y + 0.5, x + w, y + 0.5, t.border, 1.0, 1.0);
     y += 1.0 + 12.0;
-    let stats: [(&str, String, u32); 3] = [
-        ("Total (sum of wires)", c.total.map_or("—".into(), |v| format!("{v:.1} A")), t.fg),
-        ("Spread", c.spread.map_or("—".into(), |v| format!("{v:.1} A")), level_colors(t, c.spread_level).1),
+    let stats: [(&str, String, u32); 2] = [
+        ("Imbalance", c.imbalance.map_or("—".into(), |v| format!("{v:.1} A")), level_colors(t, c.imbalance_level).1),
         ("PSU status", c.psu_status.clone(), level_colors(t, c.psu_level).1),
     ];
-    let sw = w / 3.0;
+    let sw = w / 2.0;
     for (i, (k, v, col)) in stats.iter().enumerate() {
         let sx = x + sw * i as f32;
         p.text(k, ui(11.0, 400), sx, y, sw, 14.0, t.fg3, 1.0, Align::Left);
@@ -411,6 +387,64 @@ pub(crate) fn draw_content(p: &Painter, t: &Theme, c: &ConnectorView, x: f32, mu
     }
 }
 
-fn trim(a: f32) -> String {
-    if a.fract() == 0.0 { format!("{a:.0}") } else { format!("{a:.1}") }
+/// The knee scale (DESIGN.md "Cut bars"): the share of the bar's height for `a` amps. The
+/// bottom 20 % covers 0 A to the knee (6 A, or 60 % of the limit if lower), the rest the
+/// decision range up to the alarm limit at the top.
+pub(crate) fn bar_share(a: f32, limit: f32) -> f32 {
+    let knee = 6.0_f32.min(0.6 * limit);
+    let a = a.clamp(0.0, limit);
+    if a <= knee { a / knee * 0.2 } else { 0.2 + (a - knee) / (limit - knee) * 0.8 }
+}
+
+/// The cut between head and body (DESIGN.md: 2 px, the weight of MeltAlarm's meaningful edges).
+const CUT: f32 = 2.0;
+
+/// One cut bar at (`x`, `y`), `w`×`h`: the top is the alarm limit, the bar is cut straight
+/// across at the rating (head: round top, flat bottom; body: flat top, round bottom), and the
+/// fill has a round top except where it meets the cut. An unmeasured wire is an outline.
+pub(crate) fn draw_cut_bar(
+    p: &Painter,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    amps: Option<f32>,
+    limit: Option<f32>,
+    rating: Option<f32>,
+    track: (u32, f32),
+    fill: u32,
+    fill_a: f32,
+    outline: u32,
+) {
+    let r = w / 2.0;
+    let Some(a) = amps else {
+        p.stroke_rrect(x + 0.5, y + 0.5, w - 1.0, h - 1.0, r, outline, 0.6, 1.0);
+        return;
+    };
+    let limit = limit.unwrap_or(12.0);
+    // Head and body heights; no rating (or a rating at the limit) means one uncut bar.
+    let cut_at = rating.filter(|&rt| rt < limit).map(|rt| bar_share(rt, limit) * h);
+    let (head_h, body_h) = match cut_at {
+        Some(c) => (h - c - CUT / 2.0, c - CUT / 2.0),
+        None => (0.0, h),
+    };
+    if head_h > 0.0 {
+        p.fill_rounded_ends(x, y, w, head_h, r, true, false, track.0, track.1);
+        p.fill_rounded_ends(x, y + h - body_h, w, body_h, r, false, true, track.0, track.1);
+    } else {
+        p.fill_rrect(x, y, w, h, r, track.0, track.1);
+    }
+    let f = if a > 0.05 { (bar_share(a, limit) * h).max(3.0_f32.min(h)) } else { 0.0 };
+    if f <= 0.0 {
+        return;
+    }
+    let body_fill = f.min(body_h);
+    let body_full = head_h > 0.0 && body_fill >= body_h;
+    p.fill_rounded_ends(x, y + h - body_fill, w, body_fill, r, !body_full, true, fill, fill_a);
+    if head_h > 0.0 {
+        let head_fill = (f - body_h - CUT).clamp(0.0, head_h);
+        if head_fill > 0.0 {
+            p.fill_rounded_ends(x, y + head_h - head_fill, w, head_fill, r, true, false, fill, fill_a);
+        }
+    }
 }

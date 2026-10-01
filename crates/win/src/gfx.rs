@@ -6,7 +6,7 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D_RECT_F, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1_DRAW_TEXT_OPTIONS_CLIP, D2D1_ELLIPSE, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
+    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_DRAW_TEXT_OPTIONS_CLIP, D2D1_ELLIPSE, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
     D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_SOFTWARE, D2D1_RENDER_TARGET_USAGE_NONE, D2D1_ROUNDED_RECT,
     D2D1CreateFactory, ID2D1DCRenderTarget, ID2D1Factory, ID2D1SolidColorBrush,
 };
@@ -221,6 +221,21 @@ impl Painter<'_> {
         self.fill_rect(x, y, w, r.min(h), rgb, a);
     }
 
+    /// A rectangle rounded only at the chosen ends (top and/or bottom), drawn once (no
+    /// overlapping halves, so translucent fills stay even): a taller rounded rect, clipped.
+    pub fn fill_rounded_ends(&self, x: f32, y: f32, w: f32, h: f32, r: f32, top: bool, bottom: bool, rgb: u32, a: f32) {
+        if h <= 0.0 {
+            return;
+        }
+        let ext_top = if top { 0.0 } else { r };
+        let ext_bottom = if bottom { 0.0 } else { r };
+        // SAFETY: a clip pushed and popped within the same draw.
+        unsafe { self.rt.PushAxisAlignedClip(&rect(x, y, w, h), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE) };
+        self.fill_rrect(x, y - ext_top, w, h + ext_top + ext_bottom, r.min((h + ext_top + ext_bottom) / 2.0), rgb, a);
+        // SAFETY: matches the push above.
+        unsafe { self.rt.PopAxisAlignedClip() };
+    }
+
     pub fn stroke_rrect(&self, x: f32, y: f32, w: f32, h: f32, r: f32, rgb: u32, a: f32, width: f32) {
         if let Some(b) = self.brush(rgb, a) {
             let rr = D2D1_ROUNDED_RECT { rect: rect(x, y, w, h), radiusX: r, radiusY: r };
@@ -251,15 +266,6 @@ impl Painter<'_> {
         }
     }
 
-    pub fn dashed_hline(&self, x1: f32, x2: f32, y: f32, rgb: u32, a: f32) {
-        let mut x = x1;
-        while x < x2 {
-            self.line(x, y, (x + 3.0).min(x2), y, rgb, a, 1.0);
-            x += 6.0;
-        }
-    }
-
-    /// Single-line text, vertically centered in the box.
     pub fn text(&self, s: &str, f: Font, x: f32, y: f32, w: f32, h: f32, rgb: u32, a: f32, align: Align) {
         self.text_impl(s, f, x, y, w, h, rgb, a, align, false, true);
     }

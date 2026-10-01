@@ -95,7 +95,7 @@ fn device_alarm_flows_to_view_log_and_settings() {
     assert!(v.connectors[0].tracked, "first run tracks the loaded connector");
     drop(rt);
     let log = std::fs::read_to_string(dir.join("alarms.log")).unwrap();
-    assert!(log.contains("| PSU ALARM     | 12V-2x6 #1 | status Current imbalance"));
+    assert!(log.contains("| PSU ALARM     | GPU power cable 1 | status Current imbalance"), "{log}");
     assert!(std::fs::read_to_string(dir.join("settings.toml")).unwrap().contains("fake:psu:1"));
     let _ = std::fs::remove_dir_all(dir);
 }

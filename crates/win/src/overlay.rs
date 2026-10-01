@@ -197,28 +197,21 @@ fn draw(p: &Painter, a: &AlarmView, w: f32, h: f32, hovered: bool, hint: bool) -
     p.line(x, y + 0.5, x + iw, y + 0.5, 0x2A2A2C, 1.0, 1.0);
     y += 1.0 + 14.0;
 
-    // Detail row: mini bars | what + numbers | right block.
-    let limit = a.bar_limit.unwrap_or(12.0);
+    // Detail row: small cut bars | what + numbers | right block.
     for (i, wv) in a.bars.iter().enumerate() {
+        let c = match wv.level {
+            Level::Warning => 0xFF4D4F,
+            Level::Caution => 0xF5A623,
+            Level::Normal => 0x8C8C8C,
+        };
         let bx = x + i as f32 * 14.0;
-        p.fill_rrect(bx, y + 1.0, 10.0, 48.0, 5.0, 0x2A2A2C, 1.0);
-        if let Some(amps) = wv.amps {
-            let fh = (amps / limit).clamp(0.0, 1.0) * 48.0;
-            let c = match wv.level {
-                Level::Warning => 0xFF4D4F,
-                Level::Caution => 0xF5A623,
-                Level::Normal => 0x8C8C8C,
-            };
-            if fh > 0.5 {
-                p.fill_rrect(bx, y + 49.0 - fh, 10.0, fh, 5.0_f32.min(fh / 2.0), c, 1.0);
-            }
-        }
+        crate::popup::draw_cut_bar(p, bx, y + 1.0, 10.0, 48.0, wv.amps, a.bar_limit, a.bar_rating, (0x2A2A2C, 1.0), c, 1.0, 0x8C8C8C);
     }
     let right_w = p.gfx().text_width(&a.right_value, num(36.0, 700)).max(p.gfx().text_width(&a.right_label, ui(11.0, 400)) + 10.0) + 4.0;
     let tx = x + 6.0 * 14.0 + 12.0;
     let tw = iw - (tx - x) - right_w - 12.0;
     p.text(&a.what, ui(15.0, 600), tx, y + 2.0, tw, 20.0, 0xFFFFFF, 1.0, Align::Left);
-    p.para(&a.numbers, ui(13.0, 400), tx, y + 24.0, tw, 30.0, 0xC8C8C8, 1.0);
+    p.para(&a.numbers, ui(13.0, 400), tx, y + 23.0, tw, 38.0, 0xC8C8C8, 1.0); // two full lines
     let rx = x + iw - right_w;
     p.text(&a.right_label, ui(11.0, 400), rx, y, right_w, 14.0, 0xC8C8C8, 1.0, Align::Right);
     let rc = if a.green { 0xFFFFFF } else { 0xFF4D4F };

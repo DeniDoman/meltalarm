@@ -549,17 +549,7 @@ fn draw_compact(p: &Painter, t: &Theme, c: &ConnectorView, x: f32, y: f32) {
     for (i, wv) in c.wires.iter().enumerate() {
         let cx = x + 30.0 + i as f32 * 32.0;
         let (bar, txt) = popup::level_colors(t, wv.level);
-        if wv.amps.is_some() {
-            p.fill_rrect(cx - 5.0, y0, 10.0, bar_h, 5.0, t.track.0, t.track.1);
-        } else {
-            p.stroke_rrect(cx - 5.0, y0 + 0.5, 10.0, bar_h - 1.0, 5.0, t.fg3, 0.6, 1.0);
-        }
-        if let (Some(a), Some(limit)) = (wv.amps, c.bar_limit) {
-            let fill = (a / limit).clamp(0.0, 1.0) * bar_h;
-            if fill > 0.5 {
-                p.fill_rrect(cx - 5.0, y0 + bar_h - fill, 10.0, fill, 5.0_f32.min(fill / 2.0), bar, stale);
-            }
-        }
+        popup::draw_cut_bar(p, cx - 5.0, y0, 10.0, bar_h, wv.amps, c.bar_limit, c.caution_line, t.track, bar, stale, t.fg3);
         let value = wv.amps.map_or("—".to_owned(), |a| format!("{a:.1}"));
         let color = if wv.amps.is_some() { txt } else { t.fg3 };
         p.text(&value, num(13.0, 600), cx - 16.0, y0 + bar_h + 4.0, 32.0, 17.0, color, stale, Align::Center);

@@ -113,10 +113,11 @@ impl Conn {
     pub(crate) fn in_alarm(&self) -> bool {
         self.device_alarm().is_some() || self.guard.overload().is_some()
     }
-    /// "#1" from "12V-2x6 #1".
-    pub(crate) fn short(&self) -> &str {
-        self.label.rsplit(' ').next().unwrap_or(&self.label)
-    }
+}
+
+/// The name in the log and wherever a number is needed: "GPU power cable 1" (Spec §7.0).
+fn cable_label(index: u8) -> String {
+    format!("GPU power cable {}", index + 1)
 }
 
 pub(crate) enum Phase {
@@ -211,7 +212,7 @@ impl Core {
             if self.settings.alarm_enabled {
                 self.push_notice(
                     "Last session ended during a cable alarm",
-                    "Inspect the 12V-2x6 cable with the PC off before gaming.".into(),
+                    "Inspect the GPU power cable with the PC off before gaming.".into(),
                     true,
                     Some(key),
                 );
@@ -285,7 +286,7 @@ impl Core {
                 .iter()
                 .map(|c| Conn {
                     key: ConnectorKey { source: info.id.clone(), index: c.index },
-                    label: c.label.clone(),
+                    label: cable_label(c.index),
                     wires: None,
                     eval: Eval::default(),
                     last_nonzero: None,
@@ -444,7 +445,7 @@ impl Core {
     fn on_guard(&mut self, ci: usize, e: GuardEvent, now: Instant, out: &mut Output) {
         let l = self.limits.limits;
         let c = &self.conns[ci];
-        let (label, wires, short) = (c.label.clone(), wires_text(&c.wires), c.short().to_owned());
+        let (label, wires, place, name) = (c.label.clone(), wires_text(&c.wires), self.short_name(c), self.name(c));
         match e {
             GuardEvent::OverloadStart { wire, amps: a, rule } => {
                 let rule = match rule {
@@ -452,7 +453,7 @@ impl Core {
                     Rule::Fast => format!("2 readings >= {}", amps(l.fast)),
                     Rule::Sustained => format!(">= {} for {} s", amps(l.alarm), l.alarm_delay.as_secs()),
                 };
-                let spread = self.conns[ci].eval.spread.map(|s| format!(" | spread {}", amps(s))).unwrap_or_default();
+                let spread = self.conns[ci].eval.spread.map(|s| format!(" | imbalance {}", amps(s))).unwrap_or_default();
                 out.log.push(LogEvent::Overload { conn: label, detail: format!("wire {} = {} · {rule} | wires {wires}{spread}", wire + 1, amps(a)) });
                 self.conns[ci].live_note = Some(LiveNote::Overload { when: self.when() });
             }
@@ -471,8 +472,8 @@ impl Core {
                     self.conns[ci].live_note = Some(LiveNote::Caution { when: self.when() });
                 }
                 self.raise_caution(
-                    Some(short),
-                    format!("Wire {} at {}, above the {} rating", wire + 1, amps(a), amps(l.rating)),
+                    place,
+                    format!("A wire at {}, above the {} rating", amps(a), amps(l.rating)),
                     "Ease the GPU load".into(),
                     now,
                 );
@@ -486,12 +487,11 @@ impl Core {
             GuardEvent::UnevenStart { spread, avg, low, high } => {
                 out.log.push(LogEvent::Uneven {
                     conn: label.clone(),
-                    detail: format!("spread {} at {} average for {} s | wires {wires}", amps(spread), amps(avg), guard::QUALIFY.as_secs()),
+                    detail: format!("imbalance {} at {} average for {} s | wires {wires}", amps(spread), amps(avg), guard::QUALIFY.as_secs()),
                 });
                 let text = format!(
-                    "Uneven load{}: wire {} carried {} while the others carried up to {}. Check that the cable is fully seated at both ends.",
+                    "Uneven load{}: one wire carried {} while the others carried up to {}. Check that the cable is fully seated at both ends.",
                     on(&self.when()),
-                    low.0 + 1,
                     amps(low.1),
                     amps(high)
                 );
@@ -499,8 +499,9 @@ impl Core {
                 // Higher levels supersede: no advice while an alarm is on screen.
                 if self.settings.alarm_enabled && self.active_set().is_empty() {
                     let key = self.conns[ci].key.clone();
+                    let on_what = if name == "GPU power cable" { "the GPU power cable".to_owned() } else { name };
                     self.push_notice(
-                        &format!("Uneven load on {label}"),
+                        &format!("Uneven load on {on_what}"),
                         "Check that the cable is fully seated at both ends. Details are in MeltAlarm.".into(),
                         false,
                         Some(key),
@@ -508,7 +509,7 @@ impl Core {
                 }
             }
             GuardEvent::UnevenEnd { lasted, peak_spread } => {
-                out.log.push(LogEvent::UnevenEnd { conn: label, lasted, detail: format!("peak spread {}", amps(peak_spread)) });
+                out.log.push(LogEvent::UnevenEnd { conn: label, lasted, detail: format!("peak imbalance {}", amps(peak_spread)) });
             }
         }
     }
@@ -522,19 +523,17 @@ impl Core {
                 (
                     Severity::Alarm,
                     format!(
-                        "Alarm{}: wire {} reached {}. Inspect the cable and both connectors with the PC off before the next session.",
+                        "Alarm{}: a wire reached {}. Inspect the cable and both connectors with the PC off before the next session.",
                         on(when),
-                        o.peak.0 + 1,
                         amps(o.peak.1)
                     ),
                 )
             }),
-            Some(LiveNote::Caution { when }) => c.guard.caution_peak().map(|(w, a)| {
+            Some(LiveNote::Caution { when }) => c.guard.caution_peak().map(|(_, a)| {
                 (
                     Severity::Caution,
                     format!(
-                        "Wire {} ran above the {} rating{} (peak {}). Check that the cable is fully seated, or lower the GPU power limit.",
-                        w + 1,
+                        "A wire ran above the {} rating{} (peak {}). Check that the cable is fully seated, or lower the GPU power limit.",
                         amps(l.rating),
                         on(when),
                         amps(a)
@@ -688,7 +687,7 @@ impl Core {
                 Some(s) => status_name(s),
                 None => "Wire overload".into(),
             };
-            self.last_alarm = Some((reason, c.label.clone()));
+            self.last_alarm = Some((reason, self.name(c)));
         }
         let cleared = |core: &Core| {
             let (reason, label) = core.last_alarm.clone().unwrap_or_default();

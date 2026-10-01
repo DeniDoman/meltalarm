@@ -145,8 +145,10 @@ fn first_report_tracks_the_connector_in_use_and_logs_limits_and_config() {
     assert_eq!(v.connectors[0].glyph, Glyph::Normal);
     assert_eq!(v.connectors[1].glyph, Glyph::NotConnected);
     assert!(v.alarm.is_none() && v.audio.is_none() && v.caution.is_none());
-    assert_eq!(v.connectors[0].tooltip, "MeltAlarm · #1 · OK · max 0.1A · Δ 0.0A");
-    assert_eq!(v.connectors[1].tooltip, "MeltAlarm · #2 · Not connected");
+    assert_eq!(v.connectors[0].tooltip, "MeltAlarm · OK · max 0.1A · Δ 0.0A");
+    assert_eq!(v.connectors[0].label, "GPU power cable", "one tracked cable: no number");
+    assert_eq!(v.connectors[1].tooltip, "MeltAlarm · Cable 2 · Not connected", "untracked: numbered");
+    assert_eq!(v.connectors[1].full_label, "GPU power cable 2");
     assert_eq!(v.connectors[0].psu_status, "Normal");
     assert_eq!((v.connectors[0].bar_limit, v.connectors[0].caution_line), (Some(10.5), Some(9.5)));
 }
@@ -161,11 +163,12 @@ fn device_alarm_raises_overlay_audio_countdown_note_and_logs() {
     assert_eq!(a.headline, "GPU POWER CABLE OVERLOAD");
     assert_eq!(a.what, "Current imbalance · reported by the PSU");
     assert_eq!((a.right_label.as_str(), a.right_value.as_str()), ("POWER CUT IN", "~3:00"));
-    assert!(a.numbers.starts_with("Wire 3 at 2.1 A, others 9.7–9.9 A. Spread 7.8 A"));
+    assert!(a.numbers.starts_with("Lowest wire 2.1 A, the others 9.7–9.9 A. Imbalance 7.8 A"), "{}", a.numbers);
+    assert_eq!(a.connector, "GPU power cable");
     let audio = v.audio.expect("sound");
-    assert!(matches!(audio.steps.last(), Some(AudioStep::Speak(t)) if t.contains("connector 1")));
+    assert!(matches!(audio.steps.last(), Some(AudioStep::Speak(t)) if t == "Warning. GPU power cable overload. Stop the game now."));
     assert_eq!(v.connectors[0].glyph, Glyph::Alarm);
-    assert_eq!(v.connectors[0].alarm_reason.as_deref(), Some("PSU: Current imbalance · wire 3"));
+    assert_eq!(v.connectors[0].alarm_reason.as_deref(), Some("PSU: Current imbalance"));
     assert!(h.tags().ends_with(&["PSU ALARM".into(), "PSU RAW".into()]));
     let note = h.note().expect("cable note");
     assert_eq!(note.severity, Severity::Alarm);
@@ -189,17 +192,17 @@ fn our_overload_alarms_without_the_psu_and_says_so() {
     let v = h.view();
     let a = v.alarm.expect("MeltAlarm's own alarm");
     assert_eq!(a.what, "Wire overload · measured by MeltAlarm");
-    assert_eq!(a.numbers, "Wire 1 at 12.6 A, rated 9.5 A. The PSU hasn't raised an alarm yet.");
-    assert_eq!((a.right_label.as_str(), a.right_value.as_str()), ("WIRE 1", "12.6 A"));
+    assert_eq!(a.numbers, "A wire carries 12.6 A, rated 9.5 A. The PSU hasn't raised an alarm yet.");
+    assert_eq!((a.right_label.as_str(), a.right_value.as_str()), ("HIGHEST WIRE", "12.6 A"));
     assert!(v.audio.is_some());
     let c = &v.connectors[0];
     assert_eq!((c.glyph, c.status_text.as_str()), (Glyph::Alarm, "ALARM"));
-    assert_eq!(c.alarm_reason.as_deref(), Some("Wire 1 overload · 12.6 A"));
-    assert_eq!(c.summary, "Wire 1 · 12.6 A · stop");
+    assert_eq!(c.alarm_reason.as_deref(), Some("Wire overload · 12.6 A"));
+    assert_eq!(c.summary, "Overload · 12.6 A · stop");
     assert!(c.wires[0].flagged, "the overloaded wire is knocked out in the alarm tile");
-    assert_eq!(c.tooltip, "MeltAlarm · #1 · ALARM: wire 1 overload");
+    assert_eq!(c.tooltip, "MeltAlarm · ALARM: wire overload");
     assert_eq!(h.count("OVERLOAD"), 1);
-    assert!(h.log.iter().any(|e| e.format("T").contains("wire 1 = 12.6 A · 2 readings >= 12.0 A")));
+    assert!(h.log.iter().any(|e| e.format("T").contains("GPU power cable 1 | wire 1 = 12.6 A · 2 readings >= 12.0 A")), "the log keeps the number and the wire");
 
     // The note follows the peak; the alarm clears when every wire is below the rating.
     h.tick(pin1(13.1), [0, 0]);
@@ -211,9 +214,9 @@ fn our_overload_alarms_without_the_psu_and_says_so() {
     assert_eq!(a.sub, "Inspect the cable before the next session. The note is in MeltAlarm.");
     assert_eq!(h.count("OVERLOAD END"), 1);
     let note = h.note().unwrap();
-    assert!(note.text.starts_with("Alarm on Sep 30, 18:02: wire 1 reached 13.1 A."), "{}", note.text);
+    assert!(note.text.starts_with("Alarm on Sep 30, 18:02: a wire reached 13.1 A."), "{}", note.text);
     assert!(h.state.as_ref().unwrap().alarm_open.is_none());
-    assert_eq!(h.view().connectors[0].tooltip, "MeltAlarm · #1 · OK · check the cable");
+    assert_eq!(h.view().connectors[0].tooltip, "MeltAlarm · OK · check the cable");
     assert!(h.view().connectors[0].attention);
 }
 
@@ -228,7 +231,7 @@ fn the_psu_joining_our_overload_escalates_a_snooze() {
     h.tick(pin1(16.0), [1, 0]);
     let a = h.view().alarm.expect("a new cause cancels the snooze");
     assert_eq!(a.what, "Over-current · reported by the PSU");
-    assert!(a.numbers.ends_with("Wire 1 at 16.0 A, rated 9.5 A."), "{}", a.numbers);
+    assert_eq!(a.numbers, "Highest wire 16.0 A, PSU limit 12.0 A. A wire carries 16.0 A, rated 9.5 A.");
 }
 
 #[test]
@@ -238,12 +241,12 @@ fn a_caution_shows_the_strip_once_with_one_chime_and_leaves_a_note() {
     assert!(h.view().caution.is_none(), "not yet 10 s");
     h.ticks(1, pin1(9.9));
     let s = h.view().caution.expect("strip");
-    assert_eq!((s.place.as_deref(), s.what.as_str(), s.action.as_str()), (Some("#1"), "Wire 1 at 9.9 A, above the 9.5 A rating", "Ease the GPU load"));
+    assert_eq!((s.place.as_deref(), s.what.as_str(), s.action.as_str()), (None, "A wire at 9.9 A, above the 9.5 A rating", "Ease the GPU load"));
     assert_eq!(h.count("CAUTION"), 1);
     assert_eq!(h.note().unwrap().severity, Severity::Caution);
     let c = &h.view().connectors[0];
-    assert_eq!((c.status_text.as_str(), c.summary.as_str()), ("Caution", "Wire 1 · 9.9 A · over rating"));
-    assert!(c.tooltip.starts_with("MeltAlarm · #1 · Caution · max 9.9A"));
+    assert_eq!((c.status_text.as_str(), c.summary.as_str()), ("Caution", "9.9 A · over rating"));
+    assert!(c.tooltip.starts_with("MeltAlarm · Caution · max 9.9A"));
     h.ticks(9, pin1(9.9));
     assert!(h.view().caution.is_some());
     h.ticks(1, pin1(9.9));
@@ -255,7 +258,7 @@ fn a_caution_shows_the_strip_once_with_one_chime_and_leaves_a_note() {
     h.ticks(1, LOAD);
     assert!(h.view().connectors[0].cable_note.is_some(), "back to OK: the note shows");
     let note = h.note().unwrap();
-    assert!(note.text.starts_with("Wire 1 ran above the 9.5 A rating on Sep 30, 18:02 (peak 9.9 A)."), "{}", note.text);
+    assert!(note.text.starts_with("A wire ran above the 9.5 A rating on Sep 30, 18:02 (peak 9.9 A)."), "{}", note.text);
 }
 
 #[test]
@@ -278,13 +281,14 @@ fn uneven_load_is_a_silent_notification_and_a_note_never_a_strip() {
     let v = h.view();
     assert!(v.caution.is_none() && v.alarm.is_none());
     let n = v.notice.expect("advisory");
-    assert_eq!((n.title.as_str(), n.warning), ("Uneven load on 12V-2x6 #1", false));
+    assert_eq!((n.title.as_str(), n.warning), ("Uneven load on the GPU power cable", false));
     assert_eq!(n.connector, Some(v.connectors[0].key.clone()));
     assert_eq!(h.count("UNEVEN LOAD"), 1);
     let note = h.note().unwrap();
     assert_eq!(note.severity, Severity::Advisory);
-    assert!(note.text.starts_with("Uneven load on Sep 30, 18:02: wire 1 carried 0.5 A while the others carried up to 8.0 A."));
-    assert_eq!(v.connectors[0].summary, "Uneven · Δ 7.5A");
+    assert!(note.text.starts_with("Uneven load on Sep 30, 18:02: one wire carried 0.5 A while the others carried up to 8.0 A."));
+    assert_eq!(v.connectors[0].summary, "Imbalance 7.5 A");
+    assert_eq!(v.connectors[0].imbalance_level, Level::Caution);
 }
 
 #[test]
@@ -331,7 +335,7 @@ fn restart_after_a_session_that_ended_in_an_alarm_notifies_once() {
 fn compact_texts_for_normal_and_no_data() {
     let mut h = H::new().start();
     let c = &h.view().connectors[0];
-    assert_eq!((c.status_text.as_str(), c.summary.as_str()), ("OK", "Σ 47.5A · Δ 0.4A"));
+    assert_eq!((c.status_text.as_str(), c.summary.as_str()), ("OK", "Imbalance 0.4 A"));
     h.failed_tick();
     h.failed_tick();
     h.failed_tick();
@@ -603,4 +607,19 @@ fn no_advisory_notification_while_an_alarm_is_on_screen() {
     assert!(h.view().alarm.is_some());
     assert_eq!(h.count("UNEVEN LOAD"), 1, "still logged");
     assert!(h.view().notice.is_none());
+}
+
+#[test]
+fn two_tracked_cables_carry_numbers_on_screen_and_in_the_voice() {
+    let mut h = H::new().start();
+    let k2 = h.view().connectors[1].key.clone();
+    h.ev(Event::User(UserAction::SetTracked(k2, true)));
+    let v = h.view();
+    assert_eq!((v.connectors[0].label.as_str(), v.connectors[1].label.as_str()), ("GPU power cable 1", "GPU power cable 2"));
+    assert!(v.connectors[0].tooltip.starts_with("MeltAlarm · Cable 1 · OK"));
+    h.now += Duration::from_secs(1);
+    h.report(LOAD, [8.9, 9.1, 16.0, 9.0, 8.8, 9.0], [0, 0], false);
+    let v = h.view();
+    assert_eq!(v.alarm.as_ref().unwrap().connector, "GPU power cable 2");
+    assert!(matches!(v.audio.unwrap().steps.last(), Some(AudioStep::Speak(t)) if t.ends_with("overload on cable 2. Stop the game now.")));
 }
