@@ -1,6 +1,6 @@
 # MeltAlarm — Functional Specification
 
-**Status:** v2.10 · **Date:** 2026-10-01 · Companions: `DESIGN.md` (how it looks), `ARCHITECTURE.md` (how it is built) · Changes: §13
+**Status:** v2.11 · **Date:** 2026-10-01 · Companions: `DESIGN.md` (how it looks), `ARCHITECTURE.md` (how it is built) · Changes: §13
 
 **Supported hardware:**
 - MSI **MPG Ai1300TS** and **MPG Ai1600TS** PSUs, connected by USB.
@@ -119,7 +119,7 @@ MeltAlarm logs enough on the first real event to settle these (§9).
 - Side benefit of elevation: the alarm overlay can also appear above elevated apps.
 
 ### 4.2 Distribution
-- A GitHub release holds the exe and a `SHA256SUMS` file. The downloaded file's name and folder don't matter (browsers may rename it, e.g. `meltalarm (1).exe`).
+- A GitHub release holds the exe and a `SHA256SUMS` file. The exe is built by GitHub's CI from the tagged commit, and its build provenance is attested, so anyone can check where a download came from (Architecture §10). The downloaded file's name and folder don't matter (browsers may rename it, e.g. `meltalarm (1).exe`).
 - v1 is unsigned. On first launch Windows SmartScreen shows "Windows protected your PC"; the README explains *More info → Run anyway* and how to check the SHA256.
 - The app uses no network, so it never checks for updates. Users learn about new versions from GitHub (*Watch → Releases*).
 
@@ -706,6 +706,7 @@ During a game Windows holds notifications back silently and shows them in the no
 
 | Version | Date | Changes |
 |---|---|---|
+| 2.11 | 2026-10-01 | Releases are built by CI with attested build provenance (§4.2) |
 | 2.10 | 2026-10-01 | The README's role: it bridges the cable's names and points to §7.3 for the limit keys |
 | 2.9 | 2026-10-01 | The notch's numbers: at most two lines, one fact per line (§8.2) |
 | 2.8 | 2026-10-01 | Uninstall has one entry point, Installed apps; no *Uninstall…* in the menu or Settings (§4.7) |

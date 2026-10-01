@@ -1,0 +1,4 @@
+# Pinned so CI and releases build with exactly this compiler and clippy; bump it deliberately.
+[toolchain]
+channel = "1.98.1"
+components = ["clippy"]

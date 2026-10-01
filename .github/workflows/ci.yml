@@ -1,0 +1,56 @@
+# Every push to main and every pull request (docs/ARCHITECTURE.md §10). Also run by the release
+# workflow before it builds anything.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The pinned Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Clippy, both builds (includes the read-only deny-list)
+        run: |
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo clippy --locked -p meltalarm-win --features simulate --all-targets -- -D warnings
+
+      - name: Tests, both builds
+        run: |
+          cargo test --locked --workspace --exclude meltalarm-win
+          cargo test --locked -p meltalarm-win --features simulate
+
+      - name: Read-only guard and a release build
+        shell: bash
+        run: |
+          cargo build --locked --release -p meltalarm-win
+          .github/scripts/readonly-guard.sh target/release/meltalarm.exe
+
+  # The portable crates must stay portable before any Linux frontend exists.
+  linux:
+    runs-on: ubuntu-latest
+    env:
+      PORTABLE: >-
+        -p meltalarm-model -p meltalarm-core -p meltalarm-source-api -p meltalarm-source-msi
+        -p meltalarm-source-sim -p meltalarm-runtime -p meltalarm-lifecycle
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: hidapi's Linux backend needs libudev
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - name: The pinned Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Clippy
+        run: cargo clippy --locked $PORTABLE --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --locked $PORTABLE

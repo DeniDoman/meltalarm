@@ -1,0 +1,84 @@
+# A tag vX.Y.Z builds a DRAFT release (docs/ARCHITECTURE.md §10). Nothing is published here: the
+# maintainer downloads the draft's exe, smoke-tests it on the real PSU, then presses Publish.
+# Run it by hand (workflow_dispatch) for a dry run: everything except creating the draft.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: checks
+    runs-on: windows-latest
+    permissions:
+      contents: write # create the draft release
+      id-token: write # sign the build provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: The tag matches the version
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME doesn't match version $version in Cargo.toml" >&2
+            exit 1
+          fi
+
+      - name: Release notes from CHANGELOG.md
+        shell: bash
+        run: |
+          awk -v v="$VERSION" 'index($0, "## " v " ") == 1 || $0 == "## " v {on = 1; next} /^## / {on = 0} on' CHANGELOG.md > notes.md
+          grep -q '[^[:space:]]' notes.md || { echo "CHANGELOG.md has no section for $VERSION" >&2; exit 1; }
+
+      - name: The pinned Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+
+      # A clean build: no cache, so nothing from earlier runs can reach the release.
+      - name: Build
+        run: cargo build --locked --release -p meltalarm-win
+
+      - name: Check the executable
+        shell: bash
+        run: |
+          .github/scripts/readonly-guard.sh target/release/meltalarm.exe
+          file_version=$(powershell -NoProfile -Command "(Get-Item target/release/meltalarm.exe).VersionInfo.FileVersion" | tr -d '\r')
+          [ "$file_version" = "$VERSION" ] || { echo "the exe says $file_version, Cargo.toml $VERSION" >&2; exit 1; }
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir dist
+          cp target/release/meltalarm.exe dist/
+          (cd dist && sha256sum meltalarm.exe > SHA256SUMS && cat SHA256SUMS)
+
+      - name: Build provenance attestation
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/meltalarm.exe
+
+      - name: Draft release
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/meltalarm.exe dist/SHA256SUMS \
+            --draft --verify-tag --title "MeltAlarm $VERSION" --notes-file notes.md
+
+      - name: Dry run summary
+        if: github.ref_type != 'tag'
+        shell: bash
+        run: |
+          echo "Dry run: built and attested MeltAlarm $VERSION; no release created. Notes:"
+          cat notes.md

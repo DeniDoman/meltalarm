@@ -422,9 +422,9 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
    - `send_output_report`
    - `send_feature_report`
    - `get_feature_report` (its request also travels to the device)
-3. Exactly one `#[allow(clippy::disallowed_methods)]` per source crate, at its `transport` write.
-4. *Planned with CI (v1):* CI counts those `#[allow]`s and fails if they don't equal the number of hardware source crates.
-5. No frontend or runtime crate depends on `hidapi` directly. Only `source-api` (the context) and source crates do.
+3. Exactly one `#[allow(clippy::disallowed_methods)]` per hardware source crate, at its `transport` write.
+4. `.github/scripts/readonly-guard.sh` (run by CI, and locally) checks 3 and 5: one exception per hardware source crate and none anywhere else, and no other crate depending on `hidapi`, for every target platform. Given an exe, it also checks that it is the real elevated build with no simulator inside.
+5. No frontend or runtime crate depends on `hidapi` directly. Only `source-api` (the context) and the hardware source crates do.
 6. `psu-probe` (v1) uses `source-msi`'s public API only.
 
 ---
@@ -456,7 +456,12 @@ Lost:     3 unhealthy ticks → NoData view (grey); alarm, if any, stays with "c
 **Build:**
 - `x86_64-pc-windows-msvc`, static CRT.
 - `build.rs` embeds the manifest (`requireAdministrator` because of the MSI mutex, `asInvoker` for `simulate`; PerMonitorV2, Common Controls v6, Windows 10/11), the app icon (drawn per size with `paint.rs`) and VERSIONINFO.
-- *Planned (v1):* CI on Windows (fmt, clippy for both builds, tests, the read-only count, release + SHA256SUMS) **plus Linux** (`cargo test` for model, core, source-api, source-msi, source-sim, runtime, lifecycle), which keeps the portable crates portable before any Linux frontend exists.
+- **Toolchain** pinned in `rust-toolchain.toml` (CI and releases use exactly that compiler and clippy; bumped deliberately). `rustfmt` is not enforced yet.
+- **CI** (`.github/workflows/ci.yml`, every push to `main` and every pull request):
+  - Windows: clippy for both builds with warnings as errors (this includes the hidapi deny-list), the tests of both builds, a release build, and the read-only guard (§9) on it
+  - Linux: clippy and tests of the portable crates (model, core, source-api, source-msi, source-sim, runtime, lifecycle), which keeps them portable before any Linux frontend exists
+- **Release** (`.github/workflows/release.yml`, a `vX.Y.Z` tag): CI first, then a clean build without cache; the tag, `Cargo.toml` and the exe's FileVersion must agree; the guard on the exe; `SHA256SUMS`; a **build provenance attestation** (anyone can check a download with `gh attestation verify meltalarm.exe --repo DeniDoman/meltalarm`); then a **draft** release with its notes from `CHANGELOG.md`. Nothing is published automatically: the maintainer smoke-tests the draft's exe on the real PSU, then publishes. Run by hand, the workflow is a dry run that creates no release.
+- **Supply chain:** third-party actions pinned to commit hashes; read-only permissions, except the release job (write the draft, sign the attestation); no secrets. Code signing is not used (it costs money); the pipeline is the place to add it.
 - **Repo:** MIT; `docs/`; the research material (PSU.dll, raw captures, original notes) stays local and git-ignored.
 
 ---
@@ -542,12 +547,12 @@ Known limits for that day, deliberately not built yet (YAGNI):
 - the cable guard and the alert ladder: caution strip and chime, advisories, cable notes
 - the simulator crate
 - the README (with the screenshots in `docs/img/`) and `AGENTS.md`
+- public on GitHub (0.3.7), CI and the release pipeline with build provenance (§10)
 
 **v1 — GitHub release:**
 - Settings window (DESIGN.md "Settings"); the menu shrinks
 - motion (DESIGN.md "Motion"); a Windows 10 pass
 - `psu-probe`; `docs/PROTOCOL.md`
-- CI (Windows + Linux crates), release with SHA256SUMS
 - acceptance: T3 coexistence run, T14–T21 lifecycle and floating, T23–T28 on real games
 
 **Next iteration:** the Linux frontend (§11.1); new sources on demand (§11.2).
@@ -561,7 +566,7 @@ Known limits for that day, deliberately not built yet (YAGNI):
 | Consistent with the spec | Every Spec §5–§9 rule has exactly one home (source-msi: §5; core: §6, §8, §9, by module; runtime: §5.4 reconnect/watchdog, §9 file; win: §4, §7, §8 rendering and playback). Spec facts F3, F13, F17 are reflected in lock, audio and transport. |
 | Single responsibility, clear boundaries | Each crate has one reason to change: vocabulary, decisions, device family, hosting, lifecycle, OS. Within core and win, modules follow spec sections and surfaces (D20). |
 | Dependency direction | Stable → volatile, verified in §2. No cycles. `core` has zero dependencies beyond `model`. |
-| Safety invariant is structural | Closed enums + single write site + the full hidapi deny-list + no `hidapi` outside sources (§9). The CI count is still to come (v1). |
+| Safety invariant is structural | Closed enums + single write site + the full hidapi deny-list + no `hidapi` outside sources, all checked by CI on every change (§9, §10). |
 | Testability | Everything that decides is pure and clock-injected; every IO edge has a fake (Transport, Driver, Paths, wall clock); the simulator covers the screens. |
 | Extensibility without speculation | Two seams (Source, Frontend), both driven by stated plans; vendor words from the source (D18). The known limits for a second device are listed (§11.2), not built. |
 | Failure isolation | §10: every non-core failure degrades a channel, never monitoring or the alarm decision. |
@@ -574,6 +579,7 @@ Known limits for that day, deliberately not built yet (YAGNI):
 
 | Version | Date | Changes |
 |---|---|---|
+| 3.1 | 2026-10-01 | CI and the release pipeline: the read-only guard script, the pinned toolchain, draft releases with build provenance (§9, §10) |
 | 3 | 2026-10-01 | Rewritten to describe the system as built after the architecture review: core modules by spec section, the simulator crate, the Windows modules (`card`, `palette`, `edge`, `menu`), vendor words from the source (D18–D20), the full hidapi deny-list, status and roadmap |
 | 2.4 | 2026-10-01 | The cable guard (D15–D17), the alert ladder, cable notes and `state.toml` |
 | 2.3 | 2026-09-30 | Floating monitor (§7.2) |

@@ -16,7 +16,7 @@ MeltAlarm is a small Windows tray app that warns you when a wire in your graphic
 ## Quick start
 
 1. Download `meltalarm.exe` from [Releases](../../releases/latest) and run it.
-2. Windows SmartScreen will say it doesn't recognize the app. That's because the exe isn't code-signed: a certificate costs money every year, and this is a personal project. Click *More info*, then *Run anyway*. If you'd rather check the file first, compare the output of `Get-FileHash .\meltalarm.exe` with `SHA256SUMS` on the release page.
+2. Windows SmartScreen will say it doesn't recognize the app. That's because the exe isn't code-signed: a certificate costs money every year, and this is a personal project. Click *More info*, then *Run anyway*. If you'd rather check the file first, compare the output of `Get-FileHash .\meltalarm.exe` with `SHA256SUMS` on the release page. Releases are built by GitHub from the tagged source, which you can verify with `gh attestation verify meltalarm.exe --repo DeniDoman/meltalarm`.
 3. Choose *Install*. MeltAlarm copies itself to Program Files and from then on starts with Windows. It asks for administrator rights; [How it works](#how-it-works) explains why.
 4. Windows 11 hides new tray icons under the **^** arrow. Click the notification MeltAlarm shows after installing to keep the icon visible.
 5. Right-click the icon and choose *Test alarm* once, so you know what it looks and sounds like.

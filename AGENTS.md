@@ -142,6 +142,13 @@ cargo build --release -p meltalarm-win              # the exe; the version comes
 - `--popup` opens the flyout at start; `--test-alarm` runs the test alarm.
 - Its data lives in `%APPDATA%\MeltAlarm-sim`.
 
+**Releasing** (only when the maintainer asks):
+1. A commit that bumps the workspace version in `Cargo.toml` and adds the version's section to `CHANGELOG.md` (its release notes).
+2. Push it and the tag `vX.Y.Z`. The release workflow builds and attests the exe and creates a **draft** release.
+3. The maintainer downloads the draft's exe, smoke-tests it on the real PSU (connects, flyout, *Test alarm*, update over the previous version) and publishes it. Never publish a draft yourself.
+
+`.github/scripts/readonly-guard.sh` runs the read-only checks locally too.
+
 **Never commit:**
 - `research/` (MSI's binary, raw captures that contain a unit serial, the original research notes)
 - `*.csv`
