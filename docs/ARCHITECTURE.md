@@ -230,7 +230,8 @@ pub struct Output { pub log: Vec<LogEvent>, pub settings_changed: Option<Setting
   pub struct ViewModel {
       pub health: Health,                      // Starting | Connecting{since, reason} | Live | Stale{age} | NoData{since}
       pub connectors: Vec<ConnectorView>,      // all connectors: tracked flag, present, wires[6]{amps, level, flagged},
-                                               // total, spread (+level), bar_limit, glyph: Normal|Alarm|NoData|NotConnected, attention marker, notes
+                                               // imbalance (+level), bar_limit (alarm) + caution_line (rating), glyph: Normal|Alarm|NoData|NotConnected,
+                                               // attention marker, notes; `label` is the display name (Spec §7.0)
       pub source: Option<SourceView>,          // model, firmware, protection summary line, fault lines
       pub alarm: Option<AlarmView>,            // phase, band color role, headline, action, sub, detail lines, right block, snooze allowed
       pub audio: Option<AudioScript>,          // Some ⇔ the alarm should be sounding now
@@ -243,7 +244,7 @@ pub struct Output { pub log: Vec<LogEvent>, pub settings_changed: Option<Setting
   pub struct AudioScript { pub steps: Vec<AudioStep>, pub repeat: bool }   // [Sound×3 with 300 ms gaps, Speak(text)]
   ```
 
-- **All user-facing strings are built here** (English): headlines, voice line, tooltip, notes. Every frontend (Windows notch, Linux notification) says the same thing, and the text is unit-tested.
+- **All user-facing strings are built here** (English): headlines, voice line, tooltip, notes, and the cable names: core names a connector "GPU power cable N" (the log always uses the number; views add it only when Spec §7.0 says so). A source's own connector label (`12V-2x6 #1`) is never shown. Every frontend (Windows notch, Linux notification) says the same thing, and the text is unit-tested.
 
 ---
 

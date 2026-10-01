@@ -11,7 +11,8 @@ Principle: **quiet when fine, unmistakable when not.**
 | Normal state | **Dark cockpit.** Normal wires use the neutral system tone (white on a dark taskbar, near-black on a light one). Color appears only for caution, warning, alarm and no data. |
 | Two modes | *Ambient* surfaces (tray, popup, settings) look native to Windows 11. The *alert* surface (the alarm) is solid, flat, high contrast and deliberately non-native. |
 | Color = state only | Amber = caution, red = warning or alarm, hollow grey = no data. Never decorative. Every state also differs in shape or lightness (filled / hollow / dim / solid tile). |
-| Popup visualization | **Vertical bars**, one per wire, filled toward the PSU limit (`OCP` from `C0`), with a dashed caution line at 80 %. The value sits under each bar. |
+| Popup visualization | **Cut bars** (2026-10-01): one bar per wire, its top is the alarm limit, cut straight across at the rating; a knee scale gives the decision range room. No limit lines, no labels, no wire numbers; the value sits under each bar. Mockups: https://claude.ai/artifact/J2r5BVZFm4CpT16r4W9GyT |
+| Names | "GPU power cable", numbered only when two are tracked or for an untracked one (Spec §7.0); "Imbalance", never "spread"; no total current. |
 | Fonts | Segoe UI Variable for UI text; Bahnschrift for numbers and the alarm (tabular figures). Both ship with Windows. |
 | Motion | Popup: 150 ms rise and fade. Alarm notch and caution strip: 200 ms drop from the top edge. Tray alarm blinks at 1 Hz. Locate pulse 0.6 s. Nothing else animates. |
 | Alert ladder | Spec §8. **Alarm** = the red notch + alarm sound + voice. **Caution** = the amber strip + one chime. **Advisory** = a silent notification. **Status** = the attention marker. Each channel means exactly one level. |
@@ -76,10 +77,20 @@ From top to bottom:
    | `No data` | neutral track fill, no dot, tertiary text |
 
 2. During an alarm: a red strip with the reason (`Wire 3 overload · 12.4 A`, or `PSU: Current imbalance · wire 3`) and, from the PSU, the countdown.
-3. Bars (96 px track) with values and wire numbers. **Full scale = the alarm limit (10.5 A)**: the top of the track is the limit, labelled in red at the top right (no line); a dashed amber line at the **rating (9.5 A)**, its label just under the line so the two labels never touch. Values above the alarm limit fill the bar completely, in red.
+3. **Cut bars** (96 px tall, 14 px wide) with the value under each; no wire numbers. See "Cut bars" below.
 4. Live lines (amber or info tint): above the rating, over the alarm limit, uneven load, PSU faults, Safeguard+ OFF, monitoring interrupted.
 5. The **cable note**, once the connector is back to OK: the caution tint, the note text, and a **Dismiss** link (accent color, right-aligned under the text, 13 px). Hit area at least 28 px tall.
-6. Footer stats: total (sum of wires), spread, **PSU status** (the PSU's own verdict in words; `—` without one).
+6. Footer stats, two columns: **Imbalance** (colored by its level) and **PSU status** (the PSU's own verdict in words; `—` without one).
+
+## Cut bars
+
+The one bar language for every surface that shows wires: the flyout, the floating view (both layouts) and the alarm banner's small bars. *Why:* on a 0–10.5 A scale the rating and the alarm limit are 9 px apart, so any lines or labels for them merge (seen in 0.3.0).
+
+- **The top of the bar is the alarm limit.** Nothing marks it: a completely full bar means alarm.
+- **Cut at the rating.** The bar is sliced straight across with a **2 px** gap: the short head keeps the round top and has a flat bottom; the body has a flat top and the round bottom. 2 px is the weight of MeltAlarm's meaningful edges (alarm banner and caution strip frames, the locate ring) and stays crisp at 125 % scaling.
+- **Knee scale.** 0–6 A fill the bottom 20 % of the bar, 6 A to the alarm limit the top 80 %. The head is then 17 px in the flyout (10 px Compact, 8.5 px on the banner) instead of 9, a 575 W load sits at 57 %, a 360 W card at full load at 17 %. With custom limits the knee is at 6 A or 60 % of the alarm limit, whichever is lower.
+- **Fill:** round top, like the Windows 11 surfaces around it; flat where it meets the cut or the end of the bar. Its color is the wire's state: neutral, amber from the rating (the fill jumps the cut), red at the alarm limit (the bar is full).
+- **Track:** the neutral track tone for both parts; no second shade, no hatching, no text. Color only ever means state.
 
 ## Floating monitor
 
@@ -90,8 +101,8 @@ A connector's view taken out of the tray to watch it for a long time (Spec §7.4
 | | Compact | Full |
 |---|---|---|
 | Size at 100 % | 220 × 152, **fixed** in every state | the popup card (360 wide), grows downward for notes like the popup |
-| Content | name + chip (`OK` / `PSU ALARM` / `No data`), six bars (56 px track, 10 px wide) with values, one summary line | exactly the popup |
-| Summary line | the most important thing, in the Spec §7.4 order: alarm (`Wire 3 · 12.4 A · stop`, `Imbalance · cut ~2:13`) in warning red; caution (`Wire 3 · 9.9 A · over rating`) and uneven load (`Uneven · Δ 4.1A`) in caution text; no data (`Last reading 12 s ago`); a cable note (`Check the cable`) in caution text; else `Σ 47.5A · Δ 0.4A` | — |
+| Content | name + chip (`OK` / `Caution` / `ALARM` / `No data`), six cut bars (56 px, 10 px wide) with values, one summary line | exactly the popup |
+| Summary line | the most important thing, in the Spec §7.4 order: alarm (`Overload · 12.4 A · stop`, `Imbalance · cut ~2:13`) in warning red; caution (`9.9 A · over rating`) and uneven load (`Imbalance 4.1 A`) in caution text; no data (`Last reading 12 s ago`); a cable note (`Check the cable`) in caution text; else `Imbalance 0.4 A` | — |
 
 - **Calm when fine:** at rest only data is visible. On hover: × (top right), a 36 × 18 tab with a chevron hanging off the bottom edge (⌄ = Full, ⌃ = Compact), a faint resize grip in the bottom-right corner, and the border brightens to `#555555`.
 - **Scaling is uniform:** the layout is drawn at the chosen scale and never distorts. Each layout remembers its own scale.
@@ -101,7 +112,7 @@ A connector's view taken out of the tray to watch it for a long time (Spec §7.4
 ## Settings (Windows 11 window, cards)
 
 Sections, in order:
-1. **Monitored connectors:** checkboxes, each with a live dot and a text label ("In use" with a green dot / "No load" with a **grey** dot; an unused connector is never red).
+1. **Monitored cables:** "GPU power cable 1" and "GPU power cable 2", checkboxes, each with a live dot and a text label ("In use" with a green dot / "No load" with a **grey** dot; an unused cable is never red).
 2. **Alerts:** a toggle ("Alerts: on screen, sound and voice"; off: "Colors, cable notes and the log only"), plus the *Test alarm* button.
 3. **Startup:** a toggle (installed copy) or *Install…* (portable).
 4. **Limits:** read-only, two short paragraphs, MeltAlarm's first, then the PSU's (Spec §7.3). *custom* in caution text after an overridden value.
@@ -115,7 +126,7 @@ Footer: *Open log folder* and the version.
 - 44 px band: headline plus the connector.
 - Action: **STOP GPU LOAD NOW** plus one explanatory line.
 - Detail row:
-  - mini bars
+  - small cut bars (10 × 48 px)
   - what the PSU reported, with numbers
   - a right-hand block: the countdown, "ANY SECOND" for status 3, or the alarm duration once cleared
 - Full-width **SNOOZE 30 s** button with the `Ctrl+Alt+G` hint.
@@ -123,7 +134,7 @@ Footer: *Open log folder* and the version.
 
   | Variant | Band | Differences |
   |---|---|---|
-  | MeltAlarm overload | red | right block `WIRE 3` / `12.4 A` instead of the countdown |
+  | MeltAlarm overload | red | right block `HIGHEST WIRE` / `12.4 A` instead of the countdown |
   | PSU status | red | right block: the PSU's countdown |
   | critical (status 3) | red | "POWER CUT: ANY SECOND" instead of the countdown |
   | data lost | red | details dimmed, plus the note "cannot confirm" |
@@ -138,7 +149,7 @@ The notch's little sibling (Spec §8.8), same place: top edge, centered, every m
 - **Look:** body `#0F0F10` at 97 %, a 2 px `#F5A623` frame, soft shadow like the notch. No band: amber is only the frame and the symbol, so it never reads as the red alarm.
 - **Content, one line, left to right:**
   - an amber caution symbol (the notch's triangle, amber)
-  - the what-and-where in white, Bahnschrift 15 semibold: `#1 · Wire 3 at 9.9 A, above the 9.5 A rating`
+  - the what-and-where in white, Bahnschrift 15 semibold: `A wire at 9.9 A, above the 9.5 A rating` (with two cables: `Cable 2 · A wire at …`)
   - ` · ` and the action in `#F5A623`, Segoe UI 14: `Ease the GPU load`
   - for a test, a `TEST` chip on the right (amber fill, dark text)
 - **Behavior:** click-through (it never catches the mouse), never activates, 10 s, then gone. The same motion as the notch.

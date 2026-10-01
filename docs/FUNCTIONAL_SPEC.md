@@ -1,6 +1,6 @@
 # MeltAlarm — Functional Specification
 
-**Status:** v2.4 · **Date:** 2026-10-01 · v2.4: MeltAlarm's own cable limits next to the PSU's verdict ("one alarm, two judges"), the alert ladder (alarm, caution, advisory, status), cable notes (§6, §7, §8, F20–F22) · v2.3: floating monitor (§7.4) · v2.2: distribution as one self-installing exe: install, update, uninstall (§4) · v2.1: the FA 51 connect handshake (F19), device identification by USB ID, startup that never gives up on a present PSU
+**Status:** v2.5 · **Date:** 2026-10-01 · v2.5: names ("GPU power cable", numbered only when it helps), "imbalance" for the spread, no wire numbers or total in the views (§7.0) · v2.4: MeltAlarm's own cable limits next to the PSU's verdict ("one alarm, two judges"), the alert ladder (alarm, caution, advisory, status), cable notes (§6, §7, §8, F20–F22) · v2.3: floating monitor (§7.4) · v2.2: distribution as one self-installing exe: install, update, uninstall (§4) · v2.1: the FA 51 connect handshake (F19), device identification by USB ID, startup that never gives up on a present PSU
 
 **Supported hardware:**
 - MSI **MPG Ai1300TS** and **MPG Ai1600TS** PSUs, connected by USB.
@@ -257,7 +257,7 @@ Total: about 3 ms of bus time per second.
 
 ## 6. Evaluation model
 
-Per connector *c* (1 or 2), from each valid `E0` sample: wires `I1..I6`, `max`, `min`, `spread = max − min`, `avg` (mean of the six), `median`.
+Per connector *c* (1 or 2), from each valid `E0` sample: wires `I1..I6`, `max`, `min`, **imbalance** `= max − min` (called *spread* or *Delta* in research notes), `avg` (mean of the six), `median`.
 
 Two independent judges look at the same connector:
 - **MeltAlarm's cable limits** (§6.1–6.4): computed from the six currents alone. They work for any source that reports per-wire currents, with or without a verdict of its own.
@@ -275,7 +275,7 @@ Physical limits of the 12V-2x6 connector (F20), the same for every PSU and GPU. 
 | **Alarm limit** | 10.5 A | An overload episode starts here; the alarm follows after **4 s** |
 | **Fast limit** | 12.0 A | The alarm follows on the **second** reading at or above it |
 | **Instant limit** | 15.0 A | The alarm follows on **one** reading |
-| **Uneven load** | spread 3.0 A while `avg` ≥ 3.0 A | Advisory (§6.4) |
+| **Uneven load** | imbalance 3.0 A while `avg` ≥ 3.0 A | Advisory (§6.4) |
 
 - The defaults are versioned (**limits v1**) and logged at start (§9).
 - They are **not in the Settings window**. Advanced users can override any of them in `settings.toml` (keys in §7.3). Only overridden values are written to the file, so users on defaults get improved defaults with updates.
@@ -287,15 +287,15 @@ Physical limits of the 12V-2x6 connector (F20), the same for every PSU and GPU. 
 
 Instant, per sample, no debounce. Colors only; **a level alone never interrupts the user**.
 
-| Level | A wire | The spread |
+| Level | A wire | The imbalance |
 |---|---|---|
 | **Warning** (red) | `I ≥ alarm limit`, or the PSU flags the wire in `E1` | the PSU reports status *Current imbalance* |
-| **Caution** (amber) | `I ≥ rating` | `spread ≥ 3.0 A` and `avg ≥ 3.0 A` |
+| **Caution** (amber) | `I ≥ rating` | `imbalance ≥ 3.0 A` and `avg ≥ 3.0 A` |
 | **Normal** | otherwise | otherwise |
 
-**Attribution of a spread level to wires.** When the spread is at caution level, every wire with `|I − median| ≥ 1.5 A` (half the uneven threshold) gets Caution. Math guarantees at least one wire: the median lies between min and max. This points at the outlier, not at an innocent neighbor. A wire's color is the highest of its current level, its attributed spread level and its `E1` flag.
+**Attribution of an imbalance level to wires.** When the imbalance is at caution level, every wire with `|I − median| ≥ 1.5 A` (half the uneven threshold) gets Caution. Math guarantees at least one wire: the median lies between min and max. This points at the outlier, not at an innocent neighbor. A wire's color is the highest of its current level, its attributed imbalance level and its `E1` flag.
 
-On the reference system a healthy cable at 575 W peaks at 8.56 A and 0.69 A spread (F12): Normal with margin.
+On the reference system a healthy cable at 575 W peaks at 8.56 A and 0.69 A imbalance (F12): Normal with margin.
 
 ### 6.3 Overload rule (MeltAlarm's alarm)
 
@@ -327,7 +327,7 @@ Colors (§6.2) are instant. Anything that **interrupts** needs the condition to 
 | Episode | Starts | Qualifies (the user is told) | Ends |
 |---|---|---|---|
 | **Caution: wire above rating** | a wire `≥ rating` | after **10 s** with no wire of the connector falling below `rating − 0.5 A` in between | after **30 s** with every wire below `rating − 0.5 A` |
-| **Advisory: uneven load** | `spread ≥ 3.0 A` and `avg ≥ 3.0 A` | after **10 s** with `spread ≥ 2.5 A` and `avg ≥ 3.0 A` throughout | after **30 s** with `spread < 2.5 A` or `avg < 3.0 A` |
+| **Advisory: uneven load** | `imbalance ≥ 3.0 A` and `avg ≥ 3.0 A` | after **10 s** with `imbalance ≥ 2.5 A` and `avg ≥ 3.0 A` throughout | after **30 s** with `imbalance < 2.5 A` or `avg < 3.0 A` |
 
 - Each episode tells the user **once**, when it qualifies (§8.8, §8.9). A condition that keeps coming and going within the 30 s end window stays one episode.
 - Gaps (> 3 s) and NO DATA break qualification but don't end an episode that already qualified.
@@ -340,7 +340,7 @@ The `C1` status byte per connector:
 |---|---|---|
 | 0 | Normal | — |
 | 1 | Over-current | A wire has been above OCP for OCP_TriggerTime |
-| 2 | Current imbalance | Spread has been above Diff for Diff_TriggerTime |
+| 2 | Current imbalance | The imbalance has been above Diff for Diff_TriggerTime |
 | 3 | Critical over-current (>18 A) | Hard firmware limit; power cut may be immediate |
 | other | Unknown PSU alert (0xNN) | Treated as an alarm |
 
@@ -374,8 +374,16 @@ This is a **status** (§8), not an episode: nothing interrupts the user. The app
 
 ## 7. User interface
 
+### 7.0 Names and words
+
+- **The thing we watch is the "GPU power cable"**, everywhere the user reads it: screens, notifications, voice, Settings and the log. "12V-2x6" appears only in the README, which bridges the two: *"MeltAlarm watches the GPU power cable: the 16-pin cable from your PSU's 12V-2x6 socket to the graphics card. Cable 1 and cable 2 are the PSU's two 12V-2x6 sockets, numbered as on the PSU."*
+- **The number appears only when it tells something.** With one tracked cable (most users) the screens say just *GPU power cable*. The number is added (*GPU power cable 2*, short *Cable 2* where space is tight) when more than one cable is tracked, or when the cable isn't tracked (an alarm on it must say which). Settings lists both sockets, so it always numbers. The **log always numbers**: it is a permanent record and stays unambiguous after a second GPU is added.
+- **No wire numbers on screen.** Which physical pin a PSU wire number is has not been verified (§1), so "wire 3" can't send anyone to a pin. Screens say *a wire* / *one wire*, and the affected bar carries the color. The log keeps the wire index for diagnostics.
+- **Imbalance**, not "spread": the difference between the most and the least loaded wire. The event of too much imbalance is *uneven load*.
+- **No total current.** The sum of the wires is roughly the GPU's power draw; no decision depends on it and GPU tools show it in watts. It is not shown.
+
 ### 7.1 Tray icons
-- One icon per **tracked** connector (1 or 2), in the fixed order #1 then #2.
+- One icon per **tracked** cable (1 or 2), in the fixed order 1 then 2.
 - The glyph is **6 squares in 2 rows of 3**. Square *n* = wire *n* (row 1: wires 1–3, row 2: wires 4–6), colored per §6.2.
 - Visual states (exact look is decided in the UI design phase):
   - neutral (normal, "dark cockpit") / amber / red squares — see DESIGN.md
@@ -384,7 +392,7 @@ This is a **status** (§8), not an episode: nothing interrupts the user. The app
   - **connecting**: before the first successful connection, a single hollow icon with the tooltip *"MeltAlarm · connecting to the PSU…"* (§5.1)
   - **attention marker** (one meaning: "there is something to read in the flyout"): a cable note (§8.10), a PSU fault (§6.6) or Safeguard+ OFF (§6.9)
 - **One vocabulary on every surface** (tooltip, flyout chip, floating view): `OK`, `Caution`, `ALARM`, `No data` (plus `Not connected` in the tooltip).
-- Tooltip, one line (Windows wraps tray tips at about 50 characters): `MeltAlarm · #1 · OK · max 8.6A · Δ 0.7A` (Δ = spread). Other states: `Caution · max 9.9A · Δ 0.7A`, `ALARM: <short reason>`, `No data`, `Not connected`. With a cable note and no live problem: `MeltAlarm · #1 · OK · check the cable`.
+- Tooltip, one line (Windows wraps tray tips at about 50 characters): `MeltAlarm · OK · max 8.6A · Δ 0.7A` (Δ = imbalance); with two tracked cables `MeltAlarm · Cable 2 · OK · max 8.6A · Δ 0.7A`. Other states: `Caution · max 9.9A · Δ 0.7A`, `ALARM: <short reason>`, `No data`, `Not connected`. With a cable note and no live problem: `MeltAlarm · OK · check the cable`.
 - Left click toggles the status popup for **that icon's connector**.
 - Right click opens a menu: *Settings…*, *Open alarm log*, *Exit* (Exit asks for confirmation: "Monitoring will stop"). The menu header shows the app version.
 - Windows 11 hides new tray icons in the overflow area by default. First run explains how to pin the icon.
@@ -392,12 +400,12 @@ This is a **status** (§8), not an episode: nothing interrupts the user. The app
 ### 7.2 Status popup
 - Anchored right above the clicked icon, using the icon's actual position. If that position can't be determined (e.g. the icon is in the overflow area), it anchors near the cursor.
 - Content:
-  - connector name `12V-2x6 #1`, then the state chip (`OK` / `Caution` / `ALARM` / `No data`)
-  - during an alarm: a red strip with the reason (e.g. `Wire 3 overload · 12.4 A`, or `PSU: Current imbalance · wire 3`) and, from the PSU, the countdown (§8.4)
-  - **6 vertical bars**, filled toward the **alarm limit** (10.5 A) with a dashed line at the **rating** (9.5 A), colored like the icon, with the current under each (1 decimal) and the wire number
+  - the cable's name (§7.0), then the state chip (`OK` / `Caution` / `ALARM` / `No data`)
+  - during an alarm: a red strip with the reason (e.g. `Wire overload · 12.4 A`, or `PSU: Current imbalance`) and, from the PSU, the countdown (§8.4)
+  - **6 vertical bars**, one per wire, in the PSU's wire order, with the current under each (1 decimal), no wire numbers. The top of a bar is the **alarm limit**; the bar is **cut at the rating**, so its short top part is the caution zone. The scale gives the decision range room: 0–6 A take the bottom fifth, 6 A to the alarm limit the rest (DESIGN.md "Popup"). No lines or numbers mark the limits; colors only show state.
   - live lines, while true: wire above the rating or over the alarm limit, uneven load, PSU faults, Safeguard+ OFF, monitoring interrupted
   - the **cable note** (§8.10), with *Dismiss*
-  - footer: total (sum of wires), spread, and **PSU status**: the PSU's own verdict in words (`Normal`, `Current imbalance`, `Safeguard+ off`; `—` for a source without a verdict)
+  - footer: **Imbalance** and **PSU status**: the PSU's own verdict in words (`Normal`, `Current imbalance`, `Safeguard+ off`; `—` for a source without a verdict)
 - Updates live at 1 Hz while open. Closes on focus loss or Esc, like native flyouts.
 - In NO DATA: "Monitoring interrupted", with the age of the last valid reading.
 - A **pop out** button (top right) and dragging the header turn it into the floating monitor (§7.4).
@@ -408,7 +416,7 @@ This is a **status** (§8), not an episode: nothing interrupts the user. The app
 | Setting | Default | Notes |
 |---|---|---|
 | Run at Windows startup | **On** | Installed copy only: creates or removes the startup task (§4.1). A portable copy shows an **Install…** button here instead (§4.5). |
-| Track 12V-2x6 #1 ☐ ● / Track 12V-2x6 #2 ☐ ● | First run: the connector(s) currently *connected*; if none, #1 | At least one must stay checked (the last checked box is disabled). The **●** hint dot is live: green = in use, **grey** = no load (§6.7). An unused connector is normal, never red. |
+| Track GPU power cable 1 ☐ ● / Track GPU power cable 2 ☐ ● | First run: the cable(s) currently *connected*; if none, cable 1 | At least one must stay checked (the last checked box is disabled). The **●** hint dot is live: green = in use, **grey** = no load (§6.7). An unused connector is normal, never red. |
 | Alerts (on screen, sound, voice) | **On** | Master switch for every interruption: the alarm, the caution strip, advisory and after-alarm notifications (§8). Off means colors, cable notes and the log only. The log is always written. The file key stays `alarm`. |
 
 - **Limits** (read-only), both judges side by side, in sentences:
@@ -446,7 +454,7 @@ Each tracked connector has **one view**, in one of three states: *hidden*, *flyo
 - Always on top, and **never takes focus**: clicking or dragging it doesn't take keyboard or mouse focus from a game. No taskbar button, not in Alt+Tab.
 - Drag anywhere on it to move. Drag an edge or corner to scale it **uniformly**, from 75 % up to the size of its display. No free aspect ratio, no snapping.
 - Two layouts, switched with the tab on its bottom edge: **Compact** (bars, values and one summary line) and **Full** (the §7.2 content). Compact never changes size with the state.
-- The Compact summary line shows the most important thing, in this order: the alarm reason (`Wire 3 · 12.4 A · stop` / `Imbalance · cut ~2:13`), a live caution (`Wire 3 · 9.9 A · over rating`), uneven load (`Uneven · Δ 4.1A`), no data (`Last reading 12 s ago`), a cable note (`Check the cable`), otherwise `Σ 47.5A · Δ 0.4A`.
+- The Compact summary line shows the most important thing, in this order: the alarm reason (`Overload · 12.4 A · stop` / `Imbalance · cut ~2:13`), a live caution (`9.9 A · over rating`), uneven load (`Imbalance 4.1 A`, caution color), no data (`Last reading 12 s ago`), a cable note (`Check the cable`), otherwise `Imbalance 0.4 A`.
 - Its controls (×, tab, resize grip) appear only while the mouse is over it.
 - Exclusive-fullscreen games hide it (like the notch, §8.7). Borderless games don't.
 
@@ -489,9 +497,11 @@ Each (connector, cause) pair is tracked separately. The alarm lasts while any pa
 
      | Cause | What | Right-hand block |
      |---|---|---|
-     | MeltAlarm's overload | `Wire overload · measured by MeltAlarm`; `Wire 3 at 12.4 A, rated 9.5 A. The PSU hasn't raised an alarm yet.` | `WIRE 3` · `12.4 A` |
-     | the PSU's status | `Current imbalance · reported by the PSU`; the flagged wires and currents | `POWER CUT IN` · `~2:47` (§8.4), or `ANY SECOND` for status 3 |
-     | both on one connector | the PSU's line, then our wire line | the PSU's block |
+     | MeltAlarm's overload | `Wire overload · measured by MeltAlarm`; `A wire carries 12.4 A, rated 9.5 A. The PSU hasn't raised an alarm yet.` | `HIGHEST WIRE` · `12.4 A` |
+     | the PSU's status | `Current imbalance · reported by the PSU`; the currents (`Lowest wire 2.1 A, the others 9.7–9.9 A. Imbalance 7.8 A, PSU limit 5.5 A.`) | `POWER CUT IN` · `~2:47` (§8.4), or `ANY SECOND` for status 3 |
+     | both on one cable | the PSU's line, then our wire line | the PSU's block |
+
+     The band names the cable (§7.0); for two cables in alarm, `GPU power cables 1 + 2`.
 
   4. **Big button:** `SNOOZE 30 s   (Ctrl+Alt+G)`
 
@@ -502,7 +512,7 @@ Each (connector, cause) pair is tracked separately. The alarm lasts while any pa
   3. repeat
 
   One cycle takes about 8 s. The WAV is 0.9 s long.
-- Voice line (built-in English SAPI voice): *"Warning. GPU power cable overload on connector 1. Stop the game now."* It names the actual connector(s). The same line for both judges.
+- Voice line (built-in English SAPI voice): *"Warning. GPU power cable overload. Stop the game now."* When the cable carries a number (§7.0) it adds it: *"…overload on cable 2."* The same line for both judges.
 - The sound plays **from the file** `%WINDIR%\Media\Windows Critical Stop.wav`, not the system alias (F13). If the file is missing, the fallback is the system default beep.
 - Played at the **current system volume**; no forced unmute. The PSU's own buzzer sounds regardless.
 - Output goes to the default audio device. While streaming VR (VD/Link) that is the headset, so this is how v1 alerts VR users.
@@ -537,7 +547,7 @@ A small amber strip at the same place as the notch: the top edge, centered, on e
 
 - **Appears** when a caution qualifies (§6.4, §6.6, §6.8), **once per episode**, with **one chime** (a short, soft chime, distinct from the alarm sound; exact sound chosen in design).
 - **One line: what, where, what to do.** Examples:
-  - `#1 · Wire 3 at 9.9 A, above the 9.5 A rating · Ease the GPU load`
+  - `A wire at 9.9 A, above the 9.5 A rating · Ease the GPU load` (with two cables: `Cable 2 · A wire at 9.9 A, …`)
   - `Monitoring lost · MeltAlarm can't read the PSU`
   - `PSU fault · Fan failure · The PSU may shut down`
 - **Shows for 10 s**, then slides away. Its text is a snapshot (no live flicker).
@@ -551,8 +561,8 @@ Windows notifications from the tray icon (DESIGN.md "Notifications"), used only 
 
 | Notification | When | Sound | Click |
 |---|---|---|---|
-| *Uneven load on 12V-2x6 #1* / *Check that the cable is fully seated at both ends. Details are in MeltAlarm.* | an uneven-load advisory qualifies (§6.4), once per episode, and no alarm is active (higher levels supersede) | silent | opens that connector's flyout |
-| *Last session ended during a cable alarm* / *Inspect the 12V-2x6 cable with the PC off before gaming.* | at start, if the last session ended while an alarm was active (§8.10) | default | opens that connector's flyout |
+| *Uneven load on the GPU power cable* (or *on GPU power cable 2*) / *Check that the cable is fully seated at both ends. Details are in MeltAlarm.* | an uneven-load advisory qualifies (§6.4), once per episode, and no alarm is active (higher levels supersede) | silent | opens that connector's flyout |
+| *Last session ended during a cable alarm* / *Inspect the GPU power cable with the PC off before gaming.* | at start, if the last session ended while an alarm was active (§8.10) | default | opens that connector's flyout |
 | *MeltAlarm can't reach the PSU* (§5.1), *MeltAlarm is running* (§4.5), *already running* (§4.1) | as before | as before | as before |
 
 During a game Windows holds notifications back silently and shows them in the notification center afterwards (F22). That timing is right for advice and wrong for anything urgent, which is why cautions use the strip.
@@ -562,9 +572,9 @@ During a game Windows holds notifications back silently and shows them in the no
 
 | Event | Note |
 |---|---|
-| An alarm (either judge) | *"Alarm on Sep 30, 18:02: wire 3 reached 12.4 A. Inspect the cable and both connectors with the PC off before the next session."* For the PSU's status: *"PSU alarm on Sep 30, 18:02: Current imbalance. Inspect …"* |
-| A wire-above-rating caution | *"Wire 3 ran above the 9.5 A rating on Sep 30, 18:02 (peak 10.2 A). Check that the cable is fully seated, or lower the GPU power limit."* |
-| An uneven-load advisory | *"Uneven load on Sep 30, 18:02: wire 1 carried 0.5 A while the others carried up to 9.5 A. Check that the cable is fully seated at both ends."* |
+| An alarm (either judge) | *"Alarm on Sep 30, 18:02: a wire reached 12.4 A. Inspect the cable and both connectors with the PC off before the next session."* For the PSU's status: *"PSU alarm on Sep 30, 18:02: Current imbalance. Inspect …"* |
+| A wire-above-rating caution | *"A wire ran above the 9.5 A rating on Sep 30, 18:02 (peak 10.2 A). Check that the cable is fully seated, or lower the GPU power limit."* |
+| An uneven-load advisory | *"Uneven load on Sep 30, 18:02: one wire carried 0.5 A while the others carried up to 9.5 A. Check that the cable is fully seated at both ends."* |
 
 - **Severity** alarm > caution > advisory: an event replaces the connector's note if it is at least as severe. The peak is updated while the event lasts.
 - **Created by the condition**, whether or not the Alerts switch let it interrupt. A test never creates one.
@@ -583,15 +593,15 @@ During a game Windows holds notifications back silently and shows them in the no
 
 ```
 2026-09-27 18:01:00 | LIMITS        | v1 · rating 9.5 A · alarm 10.5 A for 4 s, 12.0 A twice, 15.0 A once · uneven 3.0 A   (at start; "custom" marks overrides)
-2026-09-27 18:01:40 | CAUTION       | 12V-2x6 #1 | wire 3 = 9.9 A above the 9.5 A rating for 10 s | wires 9.1 9.3 9.9 8.8 9.0 9.2
-2026-09-27 18:02:11 | OVERLOAD      | 12V-2x6 #1 | wire 3 = 12.4 A · 2 readings >= 12.0 A | wires 9.1 9.3 12.4 8.8 9.0 9.2 | spread 3.6 A
-2026-09-27 18:02:40 | OVERLOAD END  | 12V-2x6 #1 | 29 s | peak wire 3 = 12.9 A
-2026-09-27 18:03:30 | CAUTION END   | 12V-2x6 #1 | 110 s | peak wire 3 = 12.9 A
-2026-09-27 18:04:05 | UNEVEN LOAD   | 12V-2x6 #1 | spread 4.1 A at 7.9 A average for 10 s | wires 9.4 9.3 5.3 8.8 9.0 9.2
-2026-09-27 18:09:00 | UNEVEN END    | 12V-2x6 #1 | 295 s | peak spread 4.4 A
-2026-09-27 18:05:40 | PSU ALARM     | 12V-2x6 #1 | status 2 Current imbalance | E1 wires: 3 | wires 9.8 9.9 2.1 9.7 9.8 9.9
+2026-09-27 18:01:40 | CAUTION       | GPU power cable 1 | wire 3 = 9.9 A above the 9.5 A rating for 10 s | wires 9.1 9.3 9.9 8.8 9.0 9.2
+2026-09-27 18:02:11 | OVERLOAD      | GPU power cable 1 | wire 3 = 12.4 A · 2 readings >= 12.0 A | wires 9.1 9.3 12.4 8.8 9.0 9.2 | imbalance 3.6 A
+2026-09-27 18:02:40 | OVERLOAD END  | GPU power cable 1 | 29 s | peak wire 3 = 12.9 A
+2026-09-27 18:03:30 | CAUTION END   | GPU power cable 1 | 110 s | peak wire 3 = 12.9 A
+2026-09-27 18:04:05 | UNEVEN LOAD   | GPU power cable 1 | imbalance 4.1 A at 7.9 A average for 10 s | wires 9.4 9.3 5.3 8.8 9.0 9.2
+2026-09-27 18:09:00 | UNEVEN END    | GPU power cable 1 | 295 s | peak imbalance 4.4 A
+2026-09-27 18:05:40 | PSU ALARM     | GPU power cable 1 | status 2 Current imbalance | E1 wires: 3 | wires 9.8 9.9 2.1 9.7 9.8 9.9
 2026-09-27 18:05:40 | PSU RAW C1    | 51C102...          (at start, then every 10 s while the alarm lasts)
-2026-09-27 18:06:22 | PSU CLEAR     | 12V-2x6 #1 | 42 s
+2026-09-27 18:06:22 | PSU CLEAR     | GPU power cable 1 | 42 s
 2026-09-27 18:10:00 | PSU FLAG      | OTP (PSU over-temperature) set
 2026-09-27 19:00:00 | NO DATA       | PSU stopped answering
 2026-09-27 19:00:12 | DATA BACK     | after 12 s
@@ -635,7 +645,7 @@ During a game Windows holds notifications back silently and shows them in the no
 - **T4.** Unplug the PSU USB: grey icons within ≤ 3 s, NO DATA logged. Replug: live again, DATA BACK logged.
 - **T5.** Colors on a synthetic frame feed (test build only):
   - every limit boundary (§6.2), with default and custom limits; `C0` values never change a color
-  - spread attribution, and the `avg ≥ 3 A` gate at idle
+  - imbalance attribution, and the `avg ≥ 3 A` gate at idle
   - an E1 flag override
   - both judges disagreeing in each direction (§6.5): our overload with the PSU Normal, and the PSU's alarm with our levels Normal
 - **T6.** *Test alarm*:
