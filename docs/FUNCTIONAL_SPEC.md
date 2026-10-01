@@ -1,6 +1,6 @@
 # MeltAlarm — Functional Specification
 
-**Status:** v2.7 · **Date:** 2026-10-01 · Companions: `DESIGN.md` (how it looks), `ARCHITECTURE.md` (how it is built) · Changes: §13
+**Status:** v2.8 · **Date:** 2026-10-01 · Companions: `DESIGN.md` (how it looks), `ARCHITECTURE.md` (how it is built) · Changes: §13
 
 **Supported hardware:**
 - MSI **MPG Ai1300TS** and **MPG Ai1600TS** PSUs, connected by USB.
@@ -177,7 +177,7 @@ Updates are manual: the user downloads the new exe and runs it. When another cop
 - A running MeltAlarm that hasn't closed 5 s after being asked (an older version that doesn't understand the request, or a hung one) is terminated.
 
 ### 4.7 Uninstall
-Two entry points with the same result: **Uninstall…** in Settings (in v0, the tray menu) and the installed-apps entry (which runs `meltalarm.exe --uninstall`).
+One entry point, the platform's normal one (L1): the entry in *Settings → Apps → Installed apps*, which runs `meltalarm.exe --uninstall`. MeltAlarm's own menu and Settings offer no *Uninstall*.
 
 > **Uninstall MeltAlarm?**
 > Monitoring stops and MeltAlarm will no longer start with Windows.
@@ -413,7 +413,7 @@ This is a **status** (§8), not an episode: nothing interrupts the user. The app
 
 ### 7.3 Settings window
 
-> **Until v1:** there is no Settings window yet. The three settings below plus *Test alarm* sit in the tray right-click menu as checkmark items, together with *Install…* (portable copy) or *Uninstall…* (installed copy). The window arrives in v1, and the menu then shrinks to *Settings… / Open alarm log / Exit*.
+> **Until v1:** there is no Settings window yet. The three settings below plus *Test alarm* sit in the tray right-click menu as checkmark items, together with *Install…* (portable copy only). The window arrives in v1, and the menu then shrinks to *Settings… / Open alarm log / Exit*.
 
 | Setting | Default | Notes |
 |---|---|---|
@@ -427,7 +427,7 @@ This is a **status** (§8), not an episode: nothing interrupts the user. The app
 
   Overridden values are marked *custom*. For a PSU without a verdict the second sentence reads "Your PSU reports currents only".
 - Read-only info block: MeltAlarm version, PSU model, firmware, serial, and the state of the PSU's protection (MSI: Safeguard+).
-- Buttons: **Test alarm** (§8.5), **Open log folder**, and **Uninstall…** (installed copy only, §4.7).
+- Buttons: **Test alarm** (§8.5) and **Open log folder**. Uninstalling is done from Installed apps (§4.7).
 - Settings apply immediately. They are stored in `%APPDATA%\MeltAlarm\settings.toml`.
 - **Cable limits in the file only** (§6.1), for advanced users; the README documents them: `limit_rating`, `limit_alarm`, `limit_alarm_seconds`, `limit_fast`, `limit_instant`, `limit_uneven` (amps, seconds). Read at start.
 
@@ -667,7 +667,7 @@ During a game Windows holds notifications back silently and shows them in the no
 - **T13. Silent PSU** (simulated source that is present but never answers): the hollow "connecting" icon appears, the notification comes once after 2 min, the app never exits, and it connects once the PSU answers.
 - **T14. Install** from a downloaded file on a machine without MeltAlarm: one dialog; afterwards the program is in Program Files, the shortcut and installed-apps entry exist, the startup task points to Program Files, the downloaded file can be deleted, and after a reboot the app starts with no UAC prompt. With a simulated failure (read-only target), nothing is left behind and the copy runs portable.
 - **T15. Update** while the installed older version is monitoring: one dialog; the gap is logged (STOPPED, INSTALL); settings, log, startup task and pinned icons are kept. Rolling back to the older file works the same way. Refused while an alarm (either judge) is active (*Test alarm* doesn't count). A failed replace leaves the old version running.
-- **T16. Uninstall** from the tray and from Installed apps: task, shortcut, entry and program folder are gone; settings and log remain unless the box was checked.
+- **T16. Uninstall** from Installed apps (the tray menu has no *Uninstall*): task, shortcut, entry and program folder are gone; settings and log remain unless the box was checked.
 - **T17. Portable:** *Run without installing* and `--portable` monitor normally and create no task, shortcut or entry.
 - **T18. Floating states:** every row of the §7.4 table, for both connectors, including pop out by button and by dragging, locate on tray click, and × then tray click opening the flyout.
 - **T19. Floating placement:** put a view on a second display, scale it, switch layouts; exit and restart: same display, position, layout and scale. Unplug that display: the view moves fully onto the primary display.
@@ -704,6 +704,7 @@ During a game Windows holds notifications back silently and shows them in the no
 
 | Version | Date | Changes |
 |---|---|---|
+| 2.8 | 2026-10-01 | Uninstall has one entry point, Installed apps; no *Uninstall…* in the menu or Settings (§4.7) |
 | 2.7 | 2026-10-01 | `Not connected` is a state on every surface: a cable without current is never `OK` (§6.7, §7.1); the short name `Cable 2` where space is tight (§7.0) |
 | 2.6 | 2026-10-01 | Clean-up: log examples match the real log lines, the PSU's protection is named by the source (§6.9), the full hidapi deny-list (§3), notch height, the update refusal text |
 | 2.5 | 2026-10-01 | Names: "GPU power cable", numbered only when it helps; "imbalance" for the spread; no wire numbers or total current on screen (§7.0) |

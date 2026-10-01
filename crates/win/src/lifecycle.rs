@@ -806,15 +806,11 @@ impl Ctx<'_> {
     }
 }
 
-/// Tray menu "Install…" (portable copy) and "Uninstall…" (installed copy): run the same
-/// flows in a new process, which closes this one when the user confirms.
-pub fn request(install: bool) -> Result<(), String> {
-    if install {
-        let me = std::env::current_exe().map_err(|e| e.to_string())?;
-        spawn(&me, &["--install"])
-    } else {
-        spawn(&installed_exe(), &["--uninstall"])
-    }
+/// Tray menu "Install…" (portable copy): run the install flow in a new process, which closes
+/// this one when the user confirms. Uninstall has one entry point, Windows' Installed apps.
+pub fn request_install() -> Result<(), String> {
+    let me = std::env::current_exe().map_err(|e| e.to_string())?;
+    spawn(&me, &["--install"])
 }
 
 #[cfg(test)]

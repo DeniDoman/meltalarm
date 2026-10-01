@@ -17,7 +17,6 @@ const CMD_TEST: u32 = 202;
 const CMD_LOG: u32 = 203;
 const CMD_EXIT: u32 = 204;
 const CMD_INSTALL: u32 = 205;
-const CMD_UNINSTALL: u32 = 206;
 
 impl App {
     pub(crate) fn build_menu(&self) -> Option<HMENU> {
@@ -49,9 +48,6 @@ impl App {
             add(MF_STRING, CMD_TEST, "Test alarm");
             add(MF_STRING, CMD_LOG, "Open alarm log");
             let _ = AppendMenuW(m, MF_SEPARATOR, 0, PCWSTR::null());
-            if !self.portable {
-                add(MF_STRING, CMD_UNINSTALL, "Uninstall…");
-            }
             add(MF_STRING, CMD_EXIT, "Exit");
             Some(m)
         }
@@ -64,8 +60,8 @@ impl App {
             CMD_ALARM => self.user(UserAction::SetAlarmEnabled(!v.settings.alarm_enabled)),
             CMD_STARTUP => self.user(UserAction::SetRunAtStartup(!v.settings.run_at_startup)),
             CMD_TEST => self.user(UserAction::TestAlarm),
-            CMD_INSTALL | CMD_UNINSTALL => {
-                if let Err(e) = lifecycle::request(cmd == CMD_INSTALL) {
+            CMD_INSTALL => {
+                if let Err(e) = lifecycle::request_install() {
                     sys::message(APP_NAME, &format!("Could not start the installer: {e}"), true);
                 }
                 None

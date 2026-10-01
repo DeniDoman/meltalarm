@@ -373,7 +373,7 @@ pub trait Running { fn path(&self) -> Option<PathBuf>; fn show(&self); fn alarm_
 | Autostart | Task Scheduler XML via `schtasks.exe`, target = the installed exe only, "highest privileges" at logon |
 | Instances | Single-instance mutex. The hidden main window (class `MeltAlarmMain`; simulated builds `MeltAlarmSimMain`) doubles as the **control window**: the registered message `MeltAlarm.Control` with SHOW / ALARM / QUIT via `SendMessageTimeoutW`. UIPI lets only elevated processes send it. `stop` = QUIT, wait on the process handle for 5 s, then `TerminateProcess`. |
 | Elevation | All of it runs in the already-elevated process (manifest), so Program Files and HKLM need no extra prompt. |
-| Flags | `--portable` (dev, CI), `--install` (tray *Install…* spawns this), `--uninstall` (tray *Uninstall…* and Installed apps), `--installed` (set by the installer: show the pin-the-icon hint once). `simulate` builds skip the lifecycle entirely. |
+| Flags | `--portable` (dev, CI), `--install` (tray *Install…* spawns this), `--uninstall` (the Installed apps entry), `--installed` (set by the installer: show the pin-the-icon hint once). `simulate` builds skip the lifecycle entirely. |
 
 **Linux backend (next iteration, `Policy::PackageManaged`):** no `Step`s at all: the package installs the binary, the `.desktop` file and the udev rule. `Autostart` = an XDG autostart entry pointing to the packaged binary; `Instances` = a D-Bus name or a socket in `$XDG_RUNTIME_DIR`. `decide` then only ever returns `Monitor { portable: false }` or `HandOff`.
 

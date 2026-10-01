@@ -52,7 +52,7 @@ pub enum Flag {
     Portable,
     /// "Install…" chosen in a running portable copy.
     Install,
-    /// "Uninstall…" chosen in the app or in the OS's installed-apps list.
+    /// Uninstall chosen in the OS's installed-apps list.
     Uninstall,
 }
 
