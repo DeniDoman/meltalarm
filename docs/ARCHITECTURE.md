@@ -541,11 +541,12 @@ Known limits for that day, deliberately not built yet (YAGNI):
 - the program lifecycle: install, update, uninstall, autostart
 - the cable guard and the alert ladder: caution strip and chime, advisories, cable notes
 - the simulator crate
+- the README (with the screenshots in `docs/img/`) and `AGENTS.md`
 
 **v1 — GitHub release:**
 - Settings window (DESIGN.md "Settings"); the menu shrinks
 - motion (DESIGN.md "Motion"); a Windows 10 pass
-- `psu-probe`; `docs/PROTOCOL.md`; README (with the GPU power cable / 12V-2x6 / 16-pin bridge and the `limit_*` keys)
+- `psu-probe`; `docs/PROTOCOL.md`
 - CI (Windows + Linux crates), release with SHA256SUMS
 - acceptance: T3 coexistence run, T14–T21 lifecycle and floating, T23–T28 on real games
 
